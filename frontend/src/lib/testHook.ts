@@ -17,6 +17,8 @@ import { exportData, importData, type ExportEnvelope, type ImportMode } from './
 import { isTestMode } from './testMode';
 import { getSyncStatus, resetLocalSyncState, syncNow, type SyncResult } from './sync';
 import { drainOutbox, enqueue, type OutboxEntry } from './db/outbox';
+import { dbAssets } from './assets';
+import { base64ToBytes } from './assetRefs';
 
 export interface TestHook {
   rawDump(store: string): Promise<SyncFields[]>;
@@ -92,6 +94,14 @@ export function installTestHook(): void {
       await (await getDB()).put('sync_meta', { key, value });
     },
     resetSyncState: (): Promise<void> => resetLocalSyncState(),
+    /**
+     * Store bytes through the app's own asset store (dbAssets().save — the
+     * path a pasted image takes) and resolve with the markdown ref it returns.
+     * A test can't import app modules into a production page, and synthesising
+     * a paste into the WYSIWYG canvas tests Milkdown rather than planee.
+     */
+    saveAsset: (base64: string, name: string, mime: string): Promise<string> =>
+      dbAssets().save(new Blob([base64ToBytes(base64) as BlobPart], { type: mime }), name),
   };
   (window as unknown as Record<string, unknown>)['__planee'] = api;
   window.dispatchEvent(new CustomEvent('planee-test-hook-ready'));

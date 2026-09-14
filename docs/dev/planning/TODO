@@ -8,16 +8,17 @@ Additional things to keep in mind:
 
 ## Maintenance
 
-- [ ] Check all dependencies and do updates
-  - [ ] Frontend
-  - [ ] Backend
-  - [ ] CI
+- [x] Check all dependencies and do updates
+  - [x] Frontend
+  - [x] Backend
+  - [x] CI
 
 ## Features & fixes
 
-- [ ] Port kanban board from retoken
-- [ ] Create backend connection so updates are persisted across from frontend to backend
-- [ ] Copy the github pages deploy template from retemplate
+- [x] Port kanban board from retoken
+- [x] Create backend connection so updates are persisted across from frontend to backend
+- [x] Copy the github pages deploy template from retemplate (retemplate's own `pages.yml` is no-build; adapted local-sync-template's Astro Pages workflow instead)
+- [ ] Dev + user documentation for 0.1.0 (Phase 11 of the plan)
 
 ## For human
 
@@ -26,7 +27,13 @@ This section is for me to keep track of what I need to manually review, feel fre
 - [x] Review `docs/dev/plans/version-0.1.0-phased.md` decisions (answered 2026-09-13, recorded as D1–D15)
 - [ ] Work is on branch `version-0.1.0` (one commit per checkpoint); merge into `master` when happy
 - [ ] No git remote is configured; workflows assume `master` and `descent098/planee` (git metadata lists `main` as the main branch)
-- [ ] Local Go is 1.24.5 but `backend/go.mod` requires 1.25 (toolchain auto-download covers it; consider upgrading)
+- [ ] Local Go is 1.24.5 but `backend/go.mod` requires 1.25 (toolchain auto-download covers it; consider upgrading). Go 1.25 is past upstream support; `golang:1.26-alpine` works without a go.mod change
+- [ ] Enable GitHub Pages (Settings → Pages → Source: GitHub Actions) once pushed; first `pages.yaml` run also proves `npm ci` works on Linux
+- [ ] Try the board by hand: drag on desktop and touch, keyboard moves, dark mode, drawings (Excalidraw) and mermaid in descriptions
+- [ ] `npm audit` reports 9 transitive advisories via mermaid/Excalidraw (lodash-es, nanoid): no fix without upstream releases
+- [ ] Known board rough edges: a bumped card keeps its old position (may sort to the top of Done); the card dialog's resolution/bump controls reflect the stored status for ~one reload cycle right after a drag; bump/complete are several writes, not one transaction
+- [ ] Crepe's WYSIWYG mode rewrites image alt text to a size ratio (`![1.00](assets/…)`); Source mode keeps it
+- [ ] Google Fonts (theme typography) load from an external host, so they fall back offline
 
 ## Per change
 

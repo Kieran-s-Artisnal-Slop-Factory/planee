@@ -1,10 +1,12 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { all, getSingleton, patch, put, softDelete, withSyncFields } from '../../lib/db/repo';
+  import { all, get, getSingleton, patch, put, softDelete, withSyncFields } from '../../lib/db/repo';
   import { DEFAULT_PRIORITY, DEFAULT_STATUS, DEFAULT_TASK_TYPE } from '../../lib/db/types';
   import type { Version, SyncFields, Preferences, Project, Task, VersionTask } from '../../lib/db/types';
   import { changedFields, projectLabel as labelOfProject, taskLabel as labelOfTask } from '../../lib/crud';
   import Card from '../Card.svelte';
+  import MarkdownField from '../markdown/MarkdownField.svelte';
+  import MarkdownCell from '../markdown/MarkdownCell.svelte';
 
   type VersionValues = Omit<Version, keyof SyncFields>;
 
@@ -20,6 +22,27 @@
   let formError: string | null = $state(null);
   let draft = $state(blankDraft());
   let inlineNew = $state({ project: '' });
+
+  let formEl: HTMLFormElement | null = $state(null);
+  /**
+   * True while the description's MarkdownField is open in its editor. The
+   * form's own Save is disabled meanwhile, so submitting can neither drop the
+   * unsaved text (a new row) nor close the form over it (an existing row).
+   * Read from the DOM: the field's Save button exists only while editing.
+   */
+  let markdownEditing = $state(false);
+  $effect(() => {
+    const form = formEl;
+    if (!form) {
+      markdownEditing = false;
+      return;
+    }
+    const check = () => (markdownEditing = form.querySelector('[data-testid="version-description-save"]') !== null);
+    const observer = new MutationObserver(check);
+    observer.observe(form, { childList: true, subtree: true });
+    check();
+    return () => observer.disconnect();
+  });
 
   function blankDraft() {
     return {
@@ -146,9 +169,32 @@
     editingId = row.id;
   }
 
+  /** An existing row's description: its own Save patches just that field, straight away (D10). */
+  async function saveDescription(md: string) {
+    const id = editingId;
+    if (!id) return;
+    const description = md === '' ? null : md;
+    const saved = await patch<Version>('version', id, { description });
+    if (!saved) throw new Error('That row was deleted somewhere else — nothing was saved.');
+    draft.description = md;
+    if (editingOriginal) editingOriginal.description = description;
+    await refresh();
+  }
+
+  /** The stored description right now, so a concurrent change is caught before it is overwritten. */
+  async function freshDescription() {
+    const row = editingId ? await get<Version>('version', editingId) : undefined;
+    if (!row) throw new Error('That row was deleted somewhere else — nothing was saved.');
+    return row.description ?? '';
+  }
+
   async function save(e: SubmitEvent) {
     e.preventDefault();
     formError = null;
+    if (markdownEditing) {
+      formError = 'Save or cancel the description first.';
+      return;
+    }
     const values = toValues(draft);
     if (!values.number || !values.project) {
       formError = 'A version needs a number and a project.';
@@ -160,7 +206,9 @@
       // named — and only the fields the user changed are named, so an
       // untouched field keeps its per-field stamp and a concurrent edit to it
       // on another device still wins.
-      const changes = editingOriginal ? changedFields(editingOriginal, values) : values;
+      const changes: Partial<VersionValues> = editingOriginal ? changedFields(editingOriginal, values) : { ...values };
+      // The description is not this button's: its MarkdownField saved it already.
+      delete changes.description;
       if (Object.keys(changes).length > 0) {
         const saved = await patch<Version>('version', editingId, changes);
         if (!saved) {
@@ -192,8 +240,9 @@
 </div>
 
 {#if editingId !== null}
+  {#key editingId}
   <Card title={editingId ? 'Edit' : 'New version'}>
-    <form class="stack" onsubmit={save}>
+    <form class="stack" onsubmit={save} bind:this={formEl}>
       <div>
         <label for="f-number">Number</label>
         <input id="f-number" bind:value={draft.number} placeholder="0.1.0" required />
@@ -221,9 +270,25 @@
           </button>
         </div>
       </div>
-      <div>
-        <label for="f-description">Description</label>
-        <textarea id="f-description" rows="4" bind:value={draft.description}></textarea>
+      <div class="md-box">
+        <MarkdownField
+          label="Description"
+          testid="version-description"
+          value={draft.description}
+          placeholder="No description yet."
+          minHeight="8rem"
+          onSave={editingId
+            ? saveDescription
+            : async (md) => {
+                draft.description = md;
+              }}
+          getFresh={editingId ? freshDescription : undefined}
+        />
+        <p class="hint md-note">
+          {editingId
+            ? 'Saved on its own with its Save button.'
+            : 'Kept with the new version and stored when you save it.'}
+        </p>
       </div>
       <div>
         <label class="check">
@@ -265,11 +330,15 @@
         <p class="form-error">{formError}</p>
       {/if}
       <div class="row">
-        <button class="btn btn-primary" data-testid="version-save" type="submit">Save</button>
+        <button class="btn btn-primary" data-testid="version-save" type="submit" disabled={markdownEditing}>Save</button>
         <button class="btn" type="button" onclick={() => (editingId = null)}>Cancel</button>
+        {#if markdownEditing}
+          <span class="hint">Save or cancel the description first.</span>
+        {/if}
       </div>
     </form>
   </Card>
+  {/key}
 {/if}
 
 {#if loading}
@@ -293,7 +362,7 @@
           <tr data-testid="version-row" data-row-id={row.id}>
             <td>{row.number ?? ''}</td>
             <td>{projectLabel(row.project)}</td>
-            <td class="pre">{row.description ?? ''}</td>
+            <td><MarkdownCell markdown={row.description} testid="version-description-cell" /></td>
             <td>
               {#if row.completed}
                 <span class="badge badge-done">Completed</span>
@@ -319,9 +388,14 @@
     justify-content: flex-end;
   }
 
-  .pre {
-    white-space: pre-wrap;
-    max-width: 40ch;
+  .md-box {
+    padding: var(--space-3);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-md);
+  }
+
+  .md-note {
+    margin: var(--space-2) 0 0;
   }
 
   .form-error {

@@ -35,6 +35,17 @@ replace `(unreleased)` with the release date and start a new heading above it.
 - The Excalidraw fonts (Excalifont, Nunito, Cascadia) are self-hosted and precached, so drawings render offline and nothing loads from esm.sh.
 - GitHub Pages deploy of the frontend at https://kieranwood.ca/planee (`.github/workflows/pages.yaml`). That build defaults to offline mode (`PUBLIC_DEFAULT_SYNC_MODE=offline`); a sync server can still be set in Settings.
 - Settings warns when an https page is given an `http://` sync URL, and explains when this copy of the app runs only in the browser.
+- **Board page** (`/board/`), showing one project's version:
+  - Opens on the project's current version: the oldest one not marked complete. Other open versions, a collapsible "Completed versions" list and "+ New version" sit alongside it.
+  - Columns are TODO, In Progress and Done. Won't fix, Out of scope and Bumped count as done and appear in Done with a resolution badge.
+  - Version notes are markdown.
+  - "Mark complete" offers to bump any open tasks to the next version, or to complete anyway. Completed versions are read-only until reopened.
+  - An "Unscheduled" drawer lists tasks not in any version.
+  - A sync pill shows pending changes and has "Sync now".
+- Cards show the task type, resolution and subtask progress (e.g. 2/3). The card dialog edits the description and subtasks as markdown, changes type and resolution, and bumps the task to the next version, creating that version if needed.
+- Project, version and task descriptions, and task subtasks, are markdown everywhere. Tables show them rendered and trimmed to a few lines. In edit forms each field has its own editor with Save/Cancel.
+- Home lists projects with their current version, open task count and last update. A project can be created inline and starts at version 0.1.0. The template showcase banner is gone.
+- Open pages refresh live after local edits, edits in other tabs (BroadcastChannel), and syncs that pulled changes.
 
 ## Bug Fixes
 
@@ -47,10 +58,15 @@ replace `(unreleased)` with the release date and start a new heading above it.
 - Rendered markdown is sanitised. Raw HTML, event handlers, `javascript:` links and non-image `data:` URLs are removed, and mermaid runs in strict mode. Retoken's renderer passed raw HTML straight into the page.
 - Kanban: reordering a card within a column no longer overwrites a status that column also accepts (e.g. `wontfix` in Done), and saving a card's other fields no longer changes its status.
 - Pressing Escape inside the drawing canvas no longer closes the dialog and discards the drawing.
+- The service worker no longer freezes page loads for about 30 seconds after it first installs. Activation used to wait for the whole paced offline crawl; the crawl now runs in the background.
+- Onboarding on the GitHub Pages / offline-default build now requires a server URL before choosing "Sync with a server". An empty URL there pointed sync at the static host, so every sync failed.
 
 ## Other
 
-- The offline bundle for the editor is trimmed from 422 to 230 files: Shiki and CodeMirror use a language shortlist, KaTeX ships woff2 only, and Excalidraw is English-only. The service worker's warm crawl now only follows relative paths that name `.js`/`.css`/`.woff2` files, so strings in bundled libraries that merely look like paths no longer cost 404 fetches. `src/lib/sw.test.ts` checks that the precached font list matches the files on disk.
+- The offline bundle for the editor is trimmed from 422 to 230 files: Shiki and CodeMirror use a language shortlist, KaTeX ships woff2 only, and Excalidraw is English-only. The service worker's warm crawl now only follows relative paths that name `.js`/`.css` files, so strings in bundled libraries that merely look like paths no longer cost 404 fetches. `src/lib/sw.test.ts` checks that the precached font list matches the files on disk.
+- The service worker's warm-crawl cap is sized from the real build: 259 fetches, cap 324. The new `tests/sync/sw-crawl.spec.ts` replays the crawl against the production build, using the patterns read from `sw.js`, and fails if an asset becomes unreachable, the crawl requests missing paths, or the bundle outgrows the cap. The Excalidraw fonts are now seeded into the crawl.
+- New real-UI sync tests (`board-ui.spec.ts`, `markdown-ui.spec.ts`), run against two devices and checked on all four legs: the composer, pointer drags, a concurrent drag and rename, the live change feed, resolutions kept when reordering in Done, bump, completing and reopening a version (read-only while complete), unscheduled tasks, delete tombstones, Source-tab editing that renders sanitised on a second device, the overwrite warning, and a synced image. A fourteenth sabotage case (a stale whole-card snapshot over a drag) proves these checks can fail. The test hook gains `saveAsset` (test mode only).
+- New internal modules: `lib/db/changes.ts` (change feed), `lib/versions.ts` (version ordering, e.g. `0.9.0 < 0.10.0`, and next-number suggestions), and `lib/board/adapter.ts` + `actions.ts` (pure, unit-tested board logic executed through `repo.ts`).
 - `getSyncMode()` falls back to a build-time default when no mode is saved (unit tested). DEPLOYMENT.md gains a GitHub Pages section.
 - `npm run check` now runs `svelte-check` as well as `astro check`, since `astro check` never type-checked `.svelte` files. Fixed the one error that surfaced: `HomeApp`'s initial sync status was missing `pending`.
 - Migration tests: a frozen v1 fixture database migrates to the same tables, columns and foreign keys as a fresh one, apart from one documented difference (`task.priority`'s default). Also added push/pull type round-trip tests for booleans, floats and integers.

@@ -23,7 +23,7 @@
 // Bump this on any meaningful change to this file: `activate` only purges
 // caches whose name differs, so a constant name makes that step dead code and
 // lets a previous deploy's (or a poisoned) entry survive forever.
-const CACHE_NAME = 'planee-cache-v4';
+const CACHE_NAME = 'planee-cache-v6';
 
 // Everything under this prefix belongs to this app. Cache Storage is keyed by
 // ORIGIN, not by service-worker scope, so if two of these apps are ever served
@@ -39,7 +39,7 @@ const CACHE_PREFIX = 'planee-cache-';
 // the base.
 const BASE = new URL(self.registration.scope).pathname; // always ends with '/'
 const ASSET_PREFIX = BASE + '_astro/';
-const SHELL = ['', 'project/', 'version/', 'task/', 'version_task/', 'asset/', 'preferences/', 'settings/', 'onboarding/', 'favicon.svg', 'manifest.webmanifest'].map((p) => BASE + p);
+const SHELL = ['', 'board/', 'project/', 'version/', 'task/', 'version_task/', 'asset/', 'preferences/', 'settings/', 'onboarding/', 'favicon.svg', 'manifest.webmanifest'].map((p) => BASE + p);
 
 // Self-hosted Excalidraw fonts (public/excalidraw/fonts, refreshed by
 // `npm run copy:excalidraw-fonts`). They live outside _astro/, so the crawl
@@ -74,13 +74,12 @@ const NAV_OPTS = { ignoreVary: true, ignoreSearch: true };
 // Background-warm pacing: gap between fetches and a ceiling on how many the
 // crawl will pull, so a large bundle can't hammer the host.
 const WARM_DELAY_MS = 120;
-// Sized from the measured build (Phase 7, markdown editor included): 230
-// _astro files + 13 self-hosted Excalidraw fonts, plus 305 fetches the crawl
-// spends on false positives — string literals in bundled libraries that look
-// like relative specifiers ("./locales/de-DE.json", "./fonts/Virgil/…",
-// pica's "./mm_resize") and resolve to non-existent _astro/ paths, each a 404
-// that still counts as a fetch — then +25% headroom: ceil(548 × 1.25).
-const WARM_MAX_ASSETS = 685;
+// Sized from the measured production build (board + markdown editor): a full
+// crawl is 259 fetches (12 shell pages/files, 13 Excalidraw fonts, 234 _astro
+// files), +25% headroom. tests/sync/sw-crawl.spec.ts replays this crawl
+// against the built dist/ and fails when the bundle outgrows the cap or a
+// file becomes unreachable — raise it there, deliberately, not by guesswork.
+const WARM_MAX_ASSETS = 324;
 
 /** Transient failures worth retrying (throttles and gateway hiccups). */
 const RETRY_STATUS = new Set([429, 500, 502, 503, 504]);
@@ -183,7 +182,7 @@ async function warmAssetCache() {
     // of strings that merely LOOK relative ("./locales/de-DE.json",
     // "./fonts/Virgil/…", "./mm_resize"), and each one would otherwise cost a
     // paced 404 fetch against WARM_MAX_ASSETS.
-    for (const match of text.matchAll(/['"`](\.{1,2}\/[A-Za-z0-9_.\-/]+\.(?:m?js|css|woff2))['"`]/g)) {
+    for (const match of text.matchAll(/['"`](\.{1,2}\/[A-Za-z0-9_.\-/]+\.(?:m?js|css))['"`]/g)) {
       try {
         enqueue(new URL(match[1], from).pathname);
       } catch {
@@ -232,9 +231,16 @@ self.addEventListener('activate', (event) => {
         )
       )
       .then(() => self.clients.claim())
-      // Warm in the background. waitUntil keeps the worker alive for the
-      // crawl; clients are already claimed, so nothing is blocked on it.
-      .then(() => warmOnce())
+      // Start the warm in the background, deliberately OUTSIDE waitUntil. A
+      // worker stays in the "activating" state until every promise passed to
+      // activate's waitUntil settles, and the browser holds every fetch event
+      // for its clients — navigations included — until it is "activated". The
+      // paced crawl takes ~30 s (WARM_MAX_ASSETS × WARM_DELAY_MS), so waiting
+      // on it here froze the first navigation after install for that long.
+      // The fetch handler's warmOnce() keeps an interrupted crawl going.
+      .then(() => {
+        void warmOnce();
+      })
   );
 });
 

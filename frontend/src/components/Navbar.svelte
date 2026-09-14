@@ -24,6 +24,7 @@
 
   const links = [
     { path: '/', label: 'Home' },
+    { path: '/board/', label: 'Board' },
     { path: '/project/', label: 'Project' },
     { path: '/version/', label: 'Version' },
     { path: '/task/', label: 'Task' },

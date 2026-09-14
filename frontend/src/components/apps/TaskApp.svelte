@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { all, getSingleton, patch, put, softDelete, withSyncFields } from '../../lib/db/repo';
+  import { all, get, getSingleton, patch, put, softDelete, withSyncFields } from '../../lib/db/repo';
   import { DEFAULT_PRIORITY, DEFAULT_STATUS, DEFAULT_TASK_TYPE, PRIORITY_VALUES } from '../../lib/db/types';
   import type {
     Task,
@@ -14,6 +14,8 @@
   } from '../../lib/db/types';
   import { changedFields, priorityLabel, projectLabel as labelOfProject } from '../../lib/crud';
   import Card from '../Card.svelte';
+  import MarkdownField from '../markdown/MarkdownField.svelte';
+  import MarkdownCell from '../markdown/MarkdownCell.svelte';
 
   type TaskValues = Omit<Task, keyof SyncFields>;
 
@@ -32,6 +34,30 @@
   let defaultTaskType: TaskTypeKey = $state(DEFAULT_TASK_TYPE);
   let draft = $state(blankDraft());
   let inlineNew = $state({ project: '' });
+
+  let formEl: HTMLFormElement | null = $state(null);
+  /**
+   * True while the description or subtasks MarkdownField is open in its
+   * editor. The form's own Save is disabled meanwhile, so submitting can
+   * neither drop the unsaved text (a new row) nor close the form over it (an
+   * existing row). Read from the DOM: a field's Save button exists only while
+   * editing.
+   */
+  let markdownEditing = $state(false);
+  $effect(() => {
+    const form = formEl;
+    if (!form) {
+      markdownEditing = false;
+      return;
+    }
+    const check = () =>
+      (markdownEditing =
+        form.querySelector('[data-testid="task-description-save"], [data-testid="task-subtasks-save"]') !== null);
+    const observer = new MutationObserver(check);
+    observer.observe(form, { childList: true, subtree: true });
+    check();
+    return () => observer.disconnect();
+  });
 
   function blankDraft() {
     return {
@@ -175,9 +201,45 @@
     editingId = row.id;
   }
 
+  type MarkdownKey = 'description' | 'subtasks';
+
+  /**
+   * Save handler for a markdown field. An existing task: its own Save patches
+   * just that field, straight away (D10). A new task (no id yet): the markdown
+   * is kept in the draft and written with the row.
+   */
+  function markdownSaver(field: MarkdownKey) {
+    return async (md: string) => {
+      const id = editingId;
+      if (!id) {
+        draft[field] = md;
+        return;
+      }
+      const stored = md === '' ? null : md;
+      const saved = await patch<Task>('task', id, { [field]: stored });
+      if (!saved) throw new Error('That row was deleted somewhere else — nothing was saved.');
+      draft[field] = md;
+      if (editingOriginal) editingOriginal[field] = stored;
+      await refresh();
+    };
+  }
+
+  /** The stored value right now, so a concurrent change is caught before it is overwritten. */
+  function freshMarkdown(field: MarkdownKey) {
+    return async () => {
+      const row = editingId ? await get<Task>('task', editingId) : undefined;
+      if (!row) throw new Error('That row was deleted somewhere else — nothing was saved.');
+      return row[field] ?? '';
+    };
+  }
+
   async function save(e: SubmitEvent) {
     e.preventDefault();
     formError = null;
+    if (markdownEditing) {
+      formError = 'Save or cancel the description and subtasks first.';
+      return;
+    }
     const values = toValues(draft);
     if (!values.title || !values.project) {
       formError = 'A task needs a title and a project.';
@@ -189,7 +251,10 @@
       // named — and only the fields the user changed are named, so an
       // untouched field keeps its per-field stamp and a concurrent edit to it
       // on another device still wins.
-      const changes = editingOriginal ? changedFields(editingOriginal, values) : values;
+      const changes: Partial<TaskValues> = editingOriginal ? changedFields(editingOriginal, values) : { ...values };
+      // Description and subtasks are not this button's: their MarkdownFields saved them already.
+      delete changes.description;
+      delete changes.subtasks;
       if (Object.keys(changes).length > 0) {
         const saved = await patch<Task>('task', editingId, changes);
         if (!saved) {
@@ -221,8 +286,9 @@
 </div>
 
 {#if editingId !== null}
+  {#key editingId}
   <Card title={editingId ? 'Edit' : 'New task'}>
-    <form class="stack" onsubmit={save}>
+    <form class="stack" onsubmit={save} bind:this={formEl}>
       <div>
         <label for="f-title">Title</label>
         <input id="f-title" bind:value={draft.title} required />
@@ -274,13 +340,30 @@
           </select>
         </div>
       </div>
-      <div>
-        <label for="f-description">Description</label>
-        <textarea id="f-description" rows="4" bind:value={draft.description}></textarea>
-      </div>
-      <div>
-        <label for="f-subtasks">Subtasks</label>
-        <textarea id="f-subtasks" rows="3" placeholder="- [ ] first step" bind:value={draft.subtasks}></textarea>
+      <div class="md-box">
+        <MarkdownField
+          label="Description"
+          testid="task-description"
+          value={draft.description}
+          placeholder="No description yet."
+          minHeight="8rem"
+          onSave={markdownSaver('description')}
+          getFresh={editingId ? freshMarkdown('description') : undefined}
+        />
+        <MarkdownField
+          label="Subtasks"
+          testid="task-subtasks"
+          value={draft.subtasks}
+          placeholder="No subtasks yet. Write a checklist: - [ ] first step"
+          minHeight="6rem"
+          onSave={markdownSaver('subtasks')}
+          getFresh={editingId ? freshMarkdown('subtasks') : undefined}
+        />
+        <p class="hint md-note">
+          {editingId
+            ? 'Each is saved on its own with its Save button.'
+            : 'Kept with the new task and stored when you save it.'}
+        </p>
       </div>
       <div>
         <label>Versions</label>
@@ -320,11 +403,15 @@
         <p class="form-error">{formError}</p>
       {/if}
       <div class="row">
-        <button class="btn btn-primary" data-testid="task-save" type="submit">Save</button>
+        <button class="btn btn-primary" data-testid="task-save" type="submit" disabled={markdownEditing}>Save</button>
         <button class="btn" type="button" onclick={() => (editingId = null)}>Cancel</button>
+        {#if markdownEditing}
+          <span class="hint">Save or cancel the description and subtasks first.</span>
+        {/if}
       </div>
     </form>
   </Card>
+  {/key}
 {/if}
 
 {#if loading}
@@ -352,8 +439,8 @@
             <td>{projectLabel(row.project)}</td>
             <td>{taskTypeLabel(row.task_type)}</td>
             <td>{priorityLabel(row.priority)}</td>
-            <td class="pre">{row.description ?? ''}</td>
-            <td class="pre">{row.subtasks ?? ''}</td>
+            <td><MarkdownCell markdown={row.description} testid="task-description-cell" /></td>
+            <td><MarkdownCell markdown={row.subtasks} testid="task-subtasks-cell" /></td>
             <td class="actions">
               <button class="btn btn-sm" data-testid="task-edit" onclick={() => startEdit(row)}>Edit</button>
               <button class="btn btn-sm btn-danger" data-testid="task-delete" onclick={() => del(row)}>Delete</button>
@@ -372,9 +459,17 @@
     justify-content: flex-end;
   }
 
-  .pre {
-    white-space: pre-wrap;
-    max-width: 40ch;
+  .md-box {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-4);
+    padding: var(--space-3);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-md);
+  }
+
+  .md-note {
+    margin: 0;
   }
 
   .field-pair {

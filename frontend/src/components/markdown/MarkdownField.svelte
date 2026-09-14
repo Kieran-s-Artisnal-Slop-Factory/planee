@@ -40,6 +40,7 @@
     minHeight = '12rem',
     class: className = '',
     testid = 'markdown',
+    nonce = 0,
   }: {
     /** The stored markdown. Read when editing starts; updates the preview at rest. */
     value: string | null;
@@ -57,6 +58,12 @@
     class?: string;
     /** Prefix for the data-testid hooks. */
     testid?: string;
+    /**
+     * Passed to MarkdownPreview: bump it to re-render when what the markdown
+     * points at changed (an asset arrived by sync). Unlike re-keying the
+     * field, it never throws away an open edit.
+     */
+    nonce?: number;
   } = $props();
 
   let editing = $state(false);
@@ -222,7 +229,7 @@
       {#if empty}
         <p class="md-field-placeholder" data-rendered="true">{placeholder}</p>
       {:else}
-        <MarkdownPreview markdown={shown} />
+        <MarkdownPreview markdown={shown} {nonce} />
       {/if}
     </div>
   {/if}

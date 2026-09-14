@@ -1,0 +1,8 @@
+---
+import Layout from '../layouts/Layout.astro';
+import BoardApp from '../components/apps/BoardApp.svelte';
+---
+
+<Layout title="Board">
+  <BoardApp client:only="svelte" />
+</Layout>

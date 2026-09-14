@@ -19,12 +19,16 @@
  * only automatic sync is on page load, so a change made here stays invisible to
  * other devices for minutes — the most-reported local-first symptom — and every
  * conflict window stays open far longer than it needs to.
+ *
+ * …and with notifyChanged([store]) (changes.ts), so open views in this tab and
+ * in other tabs re-read what changed.
  */
 import { getDB } from './db';
 import { enqueueIn, OUTBOX_STORE } from './outbox';
 import { STORES } from './types';
 import type { StoreName, SyncFields } from './types';
 import { requestSync } from '../sync';
+import { notifyChanged } from './changes';
 
 export const newId = (): string => crypto.randomUUID();
 export const nowIso = (): string => new Date().toISOString();
@@ -150,6 +154,7 @@ export async function put<T extends SyncFields>(store: StoreName, row: T): Promi
   enqueueIn(tx, store, stamped.id, at);
   await tx.done;
   requestSync();
+  notifyChanged([store]);
   return stamped;
 }
 
@@ -190,6 +195,7 @@ export async function patch<T extends SyncFields>(
   enqueueIn(tx, store, id, at);
   await tx.done;
   requestSync();
+  notifyChanged([store]);
   return next;
 }
 
@@ -205,6 +211,7 @@ export async function bulkPut<T extends SyncFields>(store: StoreName, rows: T[])
   }
   await tx.done;
   requestSync();
+  notifyChanged([store]);
   return stamped;
 }
 
@@ -235,6 +242,7 @@ export async function putReconciled<T extends SyncFields>(
   enqueueIn(tx, store, preserved.id, contentAt);
   await tx.done;
   requestSync();
+  notifyChanged([store]);
   return preserved;
 }
 
@@ -305,6 +313,7 @@ export async function putSingleton<T extends object>(
   enqueueIn(tx, store, SINGLETON_ID, at);
   await tx.done;
   requestSync();
+  notifyChanged([store]);
   return row;
 }
 
@@ -324,6 +333,7 @@ export async function softDelete(store: StoreName, id: string): Promise<void> {
   enqueueIn(tx, store, id, at);
   await tx.done;
   requestSync();
+  notifyChanged([store]);
 }
 
 export async function softDeleteMany(store: StoreName, ids: string[]): Promise<void> {
@@ -342,4 +352,5 @@ export async function softDeleteMany(store: StoreName, ids: string[]): Promise<v
   }
   await tx.done;
   requestSync();
+  notifyChanged([store]);
 }
