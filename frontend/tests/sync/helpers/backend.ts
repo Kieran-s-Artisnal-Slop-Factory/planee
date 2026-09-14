@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import { BIN_DIR, DIST_DIR, binName } from './paths';
 import { normalizeStored } from './schema';
 
-/** A real server on an ephemeral port with a brand-new database. */
+/** A real server on an ephemeral port with a brand-new (or seeded, see BackendOptions) database. */
 export interface Backend {
   url: string;
   dbPath: string;
@@ -32,11 +32,25 @@ function freePort(): Promise<number> {
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
-export async function startBackend(): Promise<Backend> {
+export interface BackendOptions {
+  /**
+   * SQL run against the database file BEFORE the server first opens it (via
+   * backend/cmd/sqlexec). Use it to stand up a database as an older server
+   * build left it — old schema, old rows, old user_version — so the current
+   * server's migrations run on real data at startup. Omit for a brand-new DB.
+   */
+  seedSql?: string | null;
+}
+
+export async function startBackend(opts: BackendOptions = {}): Promise<Backend> {
   const port = await freePort();
   const dir = mkdtempSync(join(tmpdir(), 'planee-sync-'));
   const dbPath = join(dir, 'planee.db');
   const url = 'http://127.0.0.1:' + port;
+
+  if (opts.seedSql) {
+    execFileSync(binName(BIN_DIR, 'sqlexec'), [dbPath], { input: opts.seedSql, encoding: 'utf8' });
+  }
 
   const proc: ChildProcess = spawn(binName(BIN_DIR, 'server'), [], {
     env: { ...process.env, PORT: String(port), DB_PATH: dbPath, STATIC_DIR: DIST_DIR },
@@ -71,7 +85,11 @@ export async function startBackend(): Promise<Backend> {
       return body.rows ?? {};
     },
     async stored() {
-      const raw = execFileSync(binName(BIN_DIR, 'dbdump'), [dbPath], { encoding: 'utf8' });
+      // maxBuffer: the default 1 MB is smaller than one asset row (base64 data).
+      const raw = execFileSync(binName(BIN_DIR, 'dbdump'), [dbPath], {
+        encoding: 'utf8',
+        maxBuffer: 512 * 1024 * 1024,
+      });
       return normalizeStored(JSON.parse(raw) as Record<string, Record<string, unknown>[]>);
     },
     async epoch() {

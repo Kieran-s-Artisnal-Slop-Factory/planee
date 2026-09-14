@@ -100,12 +100,15 @@ export async function makeDevice(
 }
 
 export const test = base.extend<{
+  /** SQL that builds the server database before it starts (see BackendOptions). Set with test.use(). */
+  backendSeedSql: string | null;
   backend: Backend;
   deviceA: Device;
   deviceB: Device;
 }>({
-  backend: async ({}, use) => {
-    const backend = await startBackend();
+  backendSeedSql: [null, { option: true }],
+  backend: async ({ backendSeedSql }, use) => {
+    const backend = await startBackend({ seedSql: backendSeedSql });
     await use(backend);
     await backend.stop();
   },

@@ -23,7 +23,7 @@
 // Bump this on any meaningful change to this file: `activate` only purges
 // caches whose name differs, so a constant name makes that step dead code and
 // lets a previous deploy's (or a poisoned) entry survive forever.
-const CACHE_NAME = 'planee-cache-v2';
+const CACHE_NAME = 'planee-cache-v3';
 
 // Everything under this prefix belongs to this app. Cache Storage is keyed by
 // ORIGIN, not by service-worker scope, so if two of these apps are ever served
@@ -39,7 +39,7 @@ const CACHE_PREFIX = 'planee-cache-';
 // the base.
 const BASE = new URL(self.registration.scope).pathname; // always ends with '/'
 const ASSET_PREFIX = BASE + '_astro/';
-const SHELL = ['', 'project/', 'version/', 'task/', 'version_task/', 'preferences/', 'settings/', 'onboarding/', 'favicon.svg', 'manifest.webmanifest'].map((p) => BASE + p);
+const SHELL = ['', 'project/', 'version/', 'task/', 'version_task/', 'asset/', 'preferences/', 'settings/', 'onboarding/', 'favicon.svg', 'manifest.webmanifest'].map((p) => BASE + p);
 
 // Servers often send `Vary: Origin`, and module import() requests carry an
 // Origin header while our install-time fetches don't — without ignoreVary the

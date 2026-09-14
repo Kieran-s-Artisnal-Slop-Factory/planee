@@ -1,40 +1,66 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { all, patch, put, softDelete, withSyncFields } from '../../lib/db/repo';
-  import type { Task, SyncFields, Project, Version, VersionTask } from '../../lib/db/types';
+  import { all, getSingleton, patch, put, softDelete, withSyncFields } from '../../lib/db/repo';
+  import { DEFAULT_PRIORITY, DEFAULT_STATUS, DEFAULT_TASK_TYPE, PRIORITY_VALUES } from '../../lib/db/types';
+  import type {
+    Task,
+    SyncFields,
+    Preferences,
+    Project,
+    TaskType,
+    TaskTypeKey,
+    Version,
+    VersionTask,
+  } from '../../lib/db/types';
+  import { changedFields, priorityLabel, projectLabel as labelOfProject } from '../../lib/crud';
   import Card from '../Card.svelte';
+
+  type TaskValues = Omit<Task, keyof SyncFields>;
 
   let loading = $state(true);
   let rows: Task[] = $state([]);
   let projectOptions: Project[] = $state([]);
+  let taskTypeOptions: TaskType[] = $state([]);
   let versionOptions: Version[] = $state([]);
   let version_taskRows: VersionTask[] = $state([]);
   let linked_version_task: string[] = $state([]);
   let newLink_version_task = $state('');
   let editingId: string | null = $state(null); // null = closed, '' = new row
+  let editingOriginal: TaskValues | null = null; // the row as it was when Edit was clicked
   let formError: string | null = $state(null);
+  /** preferences.default_task_type, read on mount; the schema default until one is saved. */
+  let defaultTaskType: TaskTypeKey = $state(DEFAULT_TASK_TYPE);
   let draft = $state(blankDraft());
   let inlineNew = $state({ project: '' });
 
   function blankDraft() {
     return {
-    project: '',
-    description: '',
-    priority: "3",
-    subtasks: '',
+      title: '',
+      project: '',
+      task_type: defaultTaskType as string,
+      priority: DEFAULT_PRIORITY as number,
+      description: '',
+      subtasks: '',
     };
   }
 
   const projectLabel = (id: string | null) =>
-    projectOptions.find((o) => o.id === id)?.description ?? id ?? '';
-  const versionLabel = (id: string | null) =>
-    versionOptions.find((o) => o.id === id)?.number ?? id ?? '';
+    labelOfProject(projectOptions.find((o) => o.id === id)) || (id ?? '');
+  const taskTypeLabel = (id: string) => taskTypeOptions.find((o) => o.id === id)?.label ?? id;
+  const versionLabel = (v: Version) => {
+    const project = projectOptions.find((p) => p.id === v.project);
+    return project ? `${labelOfProject(project)} ${v.number}` : v.number;
+  };
+  /** Versions of the selected project first; a task can only sensibly be scheduled in its own project's versions. */
+  const versionsForDraft = $derived(
+    draft.project ? versionOptions.filter((v) => v.project === draft.project || linked_version_task.includes(v.id)) : versionOptions
+  );
 
   /** Create a project row in place and select it for project. */
   async function createForFk_project() {
-    const label = inlineNew.project.trim();
-    if (!label) return;
-    const created = await put('project', withSyncFields({ description: label, version: '' }));
+    const name = inlineNew.project.trim();
+    if (!name) return;
+    const created = await put('project', withSyncFields({ name, description: '' }));
     projectOptions = await all<Project>('project');
     draft.project = created.id;
     inlineNew.project = '';
@@ -46,11 +72,24 @@
       : [...linked_version_task, targetId];
   }
 
-  /** Create a version row in place and link it. */
+  /**
+   * Create a version row in place and link it. The version belongs to the
+   * task's project: creating it with project '' made an orphan row that the
+   * server stored and every device then carried (finding 7), so the button is
+   * disabled until a project is selected.
+   */
   async function createLink_version_task() {
-    const label = newLink_version_task.trim();
-    if (!label) return;
-    const created = await put('version', withSyncFields({ number: label, project: '' }));
+    const number = newLink_version_task.trim();
+    if (!number || !draft.project) return;
+    const created = await put(
+      'version',
+      withSyncFields<Omit<Version, keyof SyncFields>>({
+        number,
+        project: draft.project,
+        description: null,
+        completed: false,
+      })
+    );
     versionOptions = await all<Version>('version');
     linked_version_task = [...linked_version_task, created.id];
     newLink_version_task = '';
@@ -66,7 +105,7 @@
     const current = live.filter((r) => r.task === ownerId);
     for (const targetId of linked_version_task) {
       if (!current.some((r) => r.version === targetId)) {
-        await put('version_task', withSyncFields({ version: targetId, task: ownerId }));
+        await put('version_task', withSyncFields({ version: targetId, task: ownerId, status: DEFAULT_STATUS, position: 0 }));
       }
     }
     for (const r of current) {
@@ -79,8 +118,11 @@
   async function refresh() {
     rows = await all<Task>('task');
     projectOptions = await all<Project>('project');
+    taskTypeOptions = (await all<TaskType>('task_type')).sort((a, b) => a.position - b.position);
     versionOptions = await all<Version>('version');
     version_taskRows = await all<VersionTask>('version_task');
+    const prefs = await getSingleton<Preferences>('preferences');
+    defaultTaskType = prefs?.default_task_type ?? DEFAULT_TASK_TYPE;
   }
 
   onMount(async () => {
@@ -90,17 +132,41 @@
 
   function startCreate() {
     draft = blankDraft();
+    editingOriginal = null;
     linked_version_task = [];
     formError = null;
     editingId = '';
   }
 
+  function toValues(d: ReturnType<typeof blankDraft>): TaskValues {
+    return {
+      project: d.project,
+      title: d.title.trim(),
+      task_type: d.task_type as TaskTypeKey,
+      description: d.description === '' ? null : d.description,
+      priority: d.priority,
+      subtasks: d.subtasks === '' ? null : d.subtasks,
+    };
+  }
+
   function startEdit(row: Task) {
     draft = {
+      title: row.title ?? '',
       project: row.project ?? '',
+      task_type: row.task_type ?? defaultTaskType,
+      priority: row.priority ?? DEFAULT_PRIORITY,
       description: row.description ?? '',
-      priority: row.priority == null ? '' : String(row.priority),
       subtasks: row.subtasks ?? '',
+    };
+    // The row's REAL values (null stays null), so opening and saving an
+    // untouched form patches nothing.
+    editingOriginal = {
+      project: row.project,
+      title: row.title,
+      task_type: row.task_type,
+      description: row.description ?? null,
+      priority: row.priority,
+      subtasks: row.subtasks ?? null,
     };
     linked_version_task = version_taskRows
       .filter((r) => r.task === row.id)
@@ -112,34 +178,29 @@
   async function save(e: SubmitEvent) {
     e.preventDefault();
     formError = null;
-    let values: Omit<Task, keyof SyncFields>;
-    try {
-      values = {
-      project: draft.project,
-      description: draft.description === '' ? null : draft.description,
-      priority: draft.priority === '' ? 0 : Math.trunc(Number(draft.priority)),
-      subtasks: draft.subtasks === '' ? null : draft.subtasks,
-      };
-    } catch (err) {
-      formError = 'Invalid JSON: ' + (err instanceof Error ? err.message : String(err));
+    const values = toValues(draft);
+    if (!values.title || !values.project) {
+      formError = 'A task needs a title and a project.';
       return;
     }
     let savedId: string;
     if (editingId) {
-      // patch() re-reads the row from the store and changes ONLY these fields.
-      // Writing `{ ...rowFromTheList, ...values }` instead would push the
-      // component's snapshot back over anything that changed underneath it —
-      // an edit pulled from another device, a change made in another tab —
-      // and that reversion then propagates as if it were deliberate.
-      const saved = await patch<Task>('task', editingId, values);
-      if (!saved) {
-        formError = 'That row was deleted somewhere else — nothing was saved.';
-        await refresh();
-        return;
+      // patch() re-reads the row from the store and changes ONLY the fields
+      // named — and only the fields the user changed are named, so an
+      // untouched field keeps its per-field stamp and a concurrent edit to it
+      // on another device still wins.
+      const changes = editingOriginal ? changedFields(editingOriginal, values) : values;
+      if (Object.keys(changes).length > 0) {
+        const saved = await patch<Task>('task', editingId, changes);
+        if (!saved) {
+          formError = 'That row was deleted somewhere else — nothing was saved.';
+          await refresh();
+          return;
+        }
       }
       savedId = editingId;
     } else {
-      const created = await put('task', withSyncFields(values));
+      const created = await put('task', withSyncFields<TaskValues>(values));
       savedId = created.id;
     }
     await syncLinks_version_task(savedId);
@@ -163,16 +224,20 @@
   <Card title={editingId ? 'Edit' : 'New task'}>
     <form class="stack" onsubmit={save}>
       <div>
+        <label for="f-title">Title</label>
+        <input id="f-title" bind:value={draft.title} required />
+      </div>
+      <div>
         <label for="f-project">Project</label>
         <select id="f-project" bind:value={draft.project} required>
           <option value="" disabled>Select…</option>
           {#each projectOptions as opt (opt.id)}
-            <option value={opt.id}>{opt.description}</option>
+            <option value={opt.id}>{labelOfProject(opt)}</option>
           {/each}
         </select>
         <div class="inline-new">
           <input
-            placeholder="New project description"
+            placeholder="New project name"
             bind:value={inlineNew.project}
           />
           <button
@@ -185,32 +250,52 @@
           </button>
         </div>
       </div>
-      <div>
-        <label for="f-description">Description</label>
-        <input id="f-description" bind:value={draft.description} />
+      <div class="field-pair">
+        <div>
+          <label for="f-task_type">Type</label>
+          <select id="f-task_type" bind:value={draft.task_type} required>
+            {#each taskTypeOptions as opt (opt.id)}
+              <option value={opt.id}>{opt.label}</option>
+            {/each}
+            {#if draft.task_type && !taskTypeOptions.some((o) => o.id === draft.task_type)}
+              <option value={draft.task_type}>{draft.task_type}</option>
+            {/if}
+          </select>
+        </div>
+        <div>
+          <label for="f-priority">Priority</label>
+          <select id="f-priority" bind:value={draft.priority} required>
+            {#each PRIORITY_VALUES as opt (opt.value)}
+              <option value={opt.value}>{opt.value} · {opt.label}</option>
+            {/each}
+            {#if !PRIORITY_VALUES.some((o) => o.value === draft.priority)}
+              <option value={draft.priority}>{draft.priority}</option>
+            {/if}
+          </select>
+        </div>
       </div>
       <div>
-        <label for="f-priority">Priority</label>
-        <input id="f-priority" type="number" step="1" bind:value={draft.priority} required />
+        <label for="f-description">Description</label>
+        <textarea id="f-description" rows="4" bind:value={draft.description}></textarea>
       </div>
       <div>
         <label for="f-subtasks">Subtasks</label>
-        <input id="f-subtasks" bind:value={draft.subtasks} />
+        <textarea id="f-subtasks" rows="3" placeholder="- [ ] first step" bind:value={draft.subtasks}></textarea>
       </div>
       <div>
-        <label>Version</label>
-        {#if versionOptions.length === 0}
-          <p class="muted">No version yet — create one below.</p>
+        <label>Versions</label>
+        {#if versionsForDraft.length === 0}
+          <p class="muted">No version yet{draft.project ? ' for this project' : ''} — create one below.</p>
         {/if}
         <div class="link-list">
-          {#each versionOptions as opt (opt.id)}
+          {#each versionsForDraft as opt (opt.id)}
             <label class="check link-item">
               <input
                 type="checkbox"
                 checked={linked_version_task.includes(opt.id)}
                 onchange={() => toggleLink_version_task(opt.id)}
               />
-              {opt.number}
+              {versionLabel(opt)}
             </label>
           {/each}
         </div>
@@ -219,12 +304,17 @@
           <button
             type="button"
             class="btn btn-sm"
+            data-testid="task-create-version"
             onclick={createLink_version_task}
-            disabled={!newLink_version_task.trim()}
+            disabled={!newLink_version_task.trim() || !draft.project}
+            title={draft.project ? undefined : 'Select a project first'}
           >
             + Create & link
           </button>
         </div>
+        {#if !draft.project}
+          <p class="muted hint">Select a project to create a version for it.</p>
+        {/if}
       </div>
       {#if formError}
         <p class="form-error">{formError}</p>
@@ -246,9 +336,11 @@
     <table class="data-table">
       <thead>
         <tr>
+          <th>Title</th>
           <th>Project</th>
-          <th>Description</th>
+          <th>Type</th>
           <th>Priority</th>
+          <th>Description</th>
           <th>Subtasks</th>
           <th></th>
         </tr>
@@ -256,10 +348,12 @@
       <tbody>
         {#each rows as row (row.id)}
           <tr data-testid="task-row" data-row-id={row.id}>
+            <td>{row.title || '(untitled)'}</td>
             <td>{projectLabel(row.project)}</td>
-            <td>{row.description ?? ''}</td>
-            <td>{row.priority ?? ''}</td>
-            <td>{row.subtasks ?? ''}</td>
+            <td>{taskTypeLabel(row.task_type)}</td>
+            <td>{priorityLabel(row.priority)}</td>
+            <td class="pre">{row.description ?? ''}</td>
+            <td class="pre">{row.subtasks ?? ''}</td>
             <td class="actions">
               <button class="btn btn-sm" data-testid="task-edit" onclick={() => startEdit(row)}>Edit</button>
               <button class="btn btn-sm btn-danger" data-testid="task-delete" onclick={() => del(row)}>Delete</button>
@@ -278,9 +372,20 @@
     justify-content: flex-end;
   }
 
-  .mono {
-    font-family: ui-monospace, monospace;
+  .pre {
+    white-space: pre-wrap;
+    max-width: 40ch;
+  }
+
+  .field-pair {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(10rem, 1fr));
+    gap: var(--space-3);
+  }
+
+  .hint {
     font-size: var(--font-size-sm);
+    margin-top: var(--space-1);
   }
 
   .form-error {

@@ -9,14 +9,16 @@
   let versionCount = $state(0);
   let taskCount = $state(0);
   let versionTaskCount = $state(0);
+  let assetCount = $state(0);
   let preferencesCount = $state(0);
-  let sync: SyncStatus = $state({ lastSyncAt: null, lastError: null });
+  let sync: SyncStatus = $state({ lastSyncAt: null, lastError: null, pending: 0 });
 
   onMount(async () => {
     projectCount = (await all('project')).length;
     versionCount = (await all('version')).length;
     taskCount = (await all('task')).length;
     versionTaskCount = (await all('version_task')).length;
+    assetCount = (await all('asset')).length;
     preferencesCount = (await all('preferences')).length;
     sync = await getSyncStatus();
     loading = false;
@@ -60,6 +62,10 @@
     <a class="tile" href={href('/version_task/')}>
       <span class="count">{versionTaskCount}</span>
       <span class="label">Version task</span>
+    </a>
+    <a class="tile" href={href('/asset/')}>
+      <span class="count">{assetCount}</span>
+      <span class="label">Assets</span>
     </a>
     <a class="tile" href={href('/preferences/')}>
       <span class="count">{preferencesCount}</span>

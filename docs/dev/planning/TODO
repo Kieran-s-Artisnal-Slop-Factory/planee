@@ -35,11 +35,14 @@ Ensure for each change:
 - if data model is updated
     - There are no sync issues/regressions with the changes
     - The schema is updated in every place it lives, together:
-        1. `backend/sql/schema.sql` — the DDL (applied to fresh databases only).
+        1. `backend/sql/schema.sql` — the DDL (applied to fresh databases only),
+           AND a new step appended to `migrations` in `backend/db.go` for
+           existing databases (never edit a shipped step).
         2. `backend/sync.go` — `tableOrder` + `tables` metadata.
         3. `frontend/src/lib/db/types.ts` — entity interfaces + store map.
         4. A new migration appended in `frontend/src/lib/db/db.ts` (never edit
-           a shipped migration).
+           a shipped migration), with any row backfill in
+           `frontend/src/lib/db/backfill.ts` (also used by old-backup import).
         5. `frontend/tests/sync/helpers/schema.ts` — the harness's own schema
            mirror, so `field-matrix.spec.ts` keeps covering every column.
       A NEW table also needs its page (`frontend/src/pages/<table>.astro` +

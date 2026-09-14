@@ -24,4 +24,9 @@ export default async function globalSetup(): Promise<void> {
     cwd: BACKEND_DIR,
     stdio: 'inherit',
   });
+  // Builds old-schema server databases for the upgrade cases (startBackend's seedSql).
+  execFileSync('go', ['build', '-o', binName(BIN_DIR, 'sqlexec'), './cmd/sqlexec'], {
+    cwd: BACKEND_DIR,
+    stdio: 'inherit',
+  });
 }

@@ -29,6 +29,7 @@ import { SYNCED_STORES } from './types';
 import type { SyncFields } from './types';
 import { resetLocalSyncState } from '../sync';
 import { enqueue } from './outbox';
+import { backfillV3 } from './backfill';
 
 export interface ExportEnvelope {
   schemaVersion: number;
@@ -78,6 +79,21 @@ export async function downloadExport(): Promise<void> {
   a.download = `planee-backup-${envelope.exportedAt.slice(0, 10)}.json`;
   a.click();
   URL.revokeObjectURL(url);
+}
+
+/**
+ * Bring a row from an older backup up to the current store shape — the same
+ * upgrade db.ts applied to live rows when the schema moved on. Without it, a
+ * backup taken before a schema change restores rows missing NOT NULL fields
+ * (a project with no name, a link with no status), which the UI cannot render
+ * and which disagree with the server's copy of the same row.
+ */
+function upgradeRow(schemaVersion: number, store: string, row: SyncFields): SyncFields {
+  let out = row;
+  if (schemaVersion < 3) {
+    out = (backfillV3(store, out as unknown as Record<string, unknown>) as unknown as SyncFields | null) ?? out;
+  }
+  return out;
 }
 
 export interface ImportResult {
@@ -149,7 +165,9 @@ export async function importData(
 
   for (const name of names) {
     const store = tx.objectStore(name);
-    const incoming = (envelope.data[name] ?? []) as SyncFields[];
+    const incoming = ((envelope.data[name] ?? []) as SyncFields[]).map((row) =>
+      upgradeRow(envelope.schemaVersion, name, row)
+    );
     if (mode === 'replace') {
       store.clear();
       for (const row of incoming) {

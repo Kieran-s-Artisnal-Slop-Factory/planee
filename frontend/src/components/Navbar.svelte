@@ -28,6 +28,7 @@
     { path: '/version/', label: 'Version' },
     { path: '/task/', label: 'Task' },
     { path: '/version_task/', label: 'Version task' },
+    { path: '/asset/', label: 'Assets' },
     { path: '/preferences/', label: 'Preferences' },
     { path: '/settings/', label: 'Settings' },
   ];

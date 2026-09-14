@@ -20,10 +20,10 @@ unchecked item.** Tick boxes as you go and commit this file with the work.
 - [x] Phase 1 — Dependency updates (frontend / backend / CI) *(parallel)*
 - [x] Phase 2 — Test tooling baseline
 - [x] **Checkpoint 1** — full suite green on the updated baseline → commit
-- [ ] Phase 3 — Backend schema-migration runner
-- [ ] Phase 4 — Data model changes (lockstep)
-- [ ] Phase 5 — Generated CRUD pages + sync harness cases for the new schema
-- [ ] **Checkpoint 2** → commit
+- [x] Phase 3 — Backend schema-migration runner
+- [x] Phase 4 — Data model changes (lockstep)
+- [x] Phase 5 — Generated CRUD pages + sync harness cases for the new schema
+- [x] **Checkpoint 2** → commit
 - [ ] Phase 6 — Port the kanban board from retoken *(parallel with 7 and 8)*
 - [ ] Phase 7 — Port retoken's markdown editor + preview, synced asset store *(parallel with 6 and 8)*
 - [ ] Phase 8 — GitHub Pages deploy *(parallel with 6 and 7)*
@@ -59,7 +59,7 @@ skipped suites. The sync harness's trust gate reports a filtered run as
 
 ```sh
 cd backend  && go vet ./... && go test ./...
-cd frontend && npx astro check
+cd frontend && npm run check            # astro check + svelte-check (errors fail; .svelte files are NOT covered by astro check)
 cd frontend && npm run test:unit        # exists from Phase 2
 cd frontend && npm run test:sync        # builds frontend + backend itself (global-setup.ts)
 docker build .                          # only if Docker is available locally; otherwise note it was skipped

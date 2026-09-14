@@ -4,7 +4,7 @@ import { assertConverged, assertFieldEverywhere, assertInvariants, capture } fro
 import { SYNCED_TABLES, buildRow, sampleValue, seedParents, tableOf } from './helpers/schema';
 
 /**
- * The trust gate: twelve deliberate faults, each of which the oracle MUST
+ * The trust gate: thirteen deliberate faults, each of which the oracle MUST
  * catch. Until this suite is green, no other green in this run means anything —
  * a harness that has never been shown to fail is unverified, not passing.
  *
@@ -202,4 +202,46 @@ test('sabotage: one unstorable row does not stop the rest of the batch', async (
   // ...and the poison row does not make every later push fail.
   const again = await deviceA.sync();
   expect(again.ok).toBe(true);
+});
+
+test('sabotage: server treats version_task as whole-row LWW', async ({ deviceA, deviceB, backend }) => {
+  // Whole-row last-write-wins, wherever it happens, looks like this from the
+  // outside: the later write carries every field, so an earlier concurrent
+  // edit to a DIFFERENT field is lost. Injected here the way it happens for
+  // real — a client that saves a whole version_task row from a stale UI
+  // snapshot (put, not patch), which stamps every field with "now". The
+  // per-field concurrency assertion must see A's status edit disappear.
+  const vt = tableOf('version_task');
+  const id = 's13';
+  const parents = await seedParents(vt, id, async (store, row) => {
+    await deviceA.call('repoPut', store, row);
+  });
+  await deviceA.call('repoPut', 'version_task', { ...buildRow(vt, id, parents, 0), status: 'todo', position: 1 });
+  await deviceA.sync();
+  await deviceB.sync();
+
+  // B renders the row, then A moves the card to in_progress and syncs.
+  const staleOnB = (await deviceB.get('version_task', id))!;
+  await deviceA.call('repoPatch', 'version_task', id, { status: 'in_progress' });
+  await deviceA.sync();
+
+  // B saves its (stale) snapshot with a new position: every field re-stamped
+  // with now — strictly after A's edit, which completed a push round trip ago.
+  const at = new Date().toISOString();
+  const stamps = Object.fromEntries(vt.columns.map((c) => [c.name, at]));
+  await deviceB.call('rawPut', 'version_task', {
+    ...staleOnB,
+    position: 2,
+    updated_at: at,
+    field_updated_at: { ...stamps, deleted_at: at },
+  });
+  await deviceB.call('enqueue', 'version_task', id, at);
+  await deviceB.sync();
+  await deviceA.sync();
+
+  const legs = await capture(deviceA, deviceB, backend);
+  // Everyone agrees — on the clobbered row. Only the intended value notices.
+  assertConverged(legs, ['version_task']);
+  assertFieldEverywhere(legs, 'version_task', id, 'position', 2);
+  expect(() => assertFieldEverywhere(legs, 'version_task', id, 'status', 'in_progress')).toThrow();
 });

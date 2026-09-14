@@ -2,7 +2,7 @@ import { expect } from '@playwright/test';
 import type { Backend } from './backend';
 import type { Device } from './devices';
 import { diffDb, diffStore, formatDiffs, type Rows } from './compare';
-import { TABLES, STORE_NAMES } from './schema';
+import { TABLES, STORE_NAMES, tableOf } from './schema';
 
 export type Db = Record<string, Rows>;
 
@@ -126,10 +126,17 @@ export function assertInvariants(db: Db, label: string): void {
       expect(live(table.name).length, label + ': ' + table.name + ' is not a singleton').toBeLessThanOrEqual(1);
     }
 
-    // 3. every live FK points at a row that exists.
+    // 3. every live FK points at a row that exists. An FK into an enum table
+    //    must be one of the keys the harness's OWN schema declares — not
+    //    merely a row the leg happens to hold: the server legs carry no enum
+    //    rows at all (they never travel), and a device whose seeding drifted
+    //    would otherwise vouch for its own bad keys.
     for (const col of table.columns) {
       if (!col.references) continue;
-      const parentIds = new Set((db[col.references] ?? []).map((r) => String(r.id)));
+      const parent = tableOf(col.references);
+      const parentIds = parent.enum
+        ? new Set((parent.values ?? []).map((v) => v.key))
+        : new Set((db[col.references] ?? []).map((r) => String(r.id)));
       for (const row of live(table.name)) {
         const value = row[col.name];
         if (value == null) continue;

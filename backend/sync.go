@@ -54,24 +54,34 @@ var tableOrder = []string{
 	"version",
 	"task",
 	"version_task",
+	"asset",
 	"preferences",
 }
 
 var tables = map[string]tableMeta{
 	"project": {
-		columns: cols("id", "description", "version"),
+		columns:    cols("id", "name", "description"),
+		fieldMerge: true,
 	},
 	"version": {
-		columns: cols("id", "number", "project"),
+		columns:    cols("id", "number", "project", "description", "completed"),
+		boolCols:   set("completed"),
+		fieldMerge: true,
 	},
 	"task": {
-		columns: cols("id", "project", "description", "priority", "subtasks"),
+		columns:    cols("id", "project", "title", "task_type", "description", "priority", "subtasks"),
+		fieldMerge: true,
 	},
 	"version_task": {
-		columns: cols("id", "version", "task"),
+		columns:    cols("id", "version", "task", "status", "position"),
+		fieldMerge: true,
+	},
+	// Whole-row last-write-wins on purpose: an asset is replaced as a unit.
+	"asset": {
+		columns: cols("id", "name", "mime", "size", "data"),
 	},
 	"preferences": {
-		columns: cols("id", "default_task_type"),
+		columns:    cols("id", "default_task_type"),
 		fieldMerge: true,
 	},
 }
@@ -266,6 +276,41 @@ func stampFor(stamps map[string]string, col string, fallback string) string {
 	return fallback
 }
 
+// stampedColumn reports whether a column carries its own entry in
+// field_updated_at: every column except the row identity and the row-level
+// bookkeeping. deleted_at IS stamped, so a delete merges like any other field.
+func stampedColumn(col string) bool {
+	return col != "id" && col != "server_seq" && col != "updated_at"
+}
+
+// withCanonicalStamps returns a copy of a NEW fieldMerge row whose
+// field_updated_at holds exactly one stamp per stamped column: the client's
+// stamp where it sent one, otherwise the row's updated_at (the same fallback
+// mergeFields and the client apply to a missing stamp), and nothing else.
+//
+// Stored verbatim instead, the map's shape depends on who wrote the row — a
+// client stamps `updated_at` too, a raw or migrated row has no stamps — while
+// every LATER merge, here and on each client, rewrites it into this canonical
+// shape. The device that created the row then pulls it back, merges, and
+// holds a different map than the server and every other device: a permanent
+// divergence in bookkeeping that the sync oracle reports on every new row.
+func withCanonicalStamps(meta tableMeta, row map[string]any) map[string]any {
+	stamps := fieldStamps(row)
+	updatedAt, _ := row["updated_at"].(string)
+	canonical := make(map[string]any, len(meta.columns))
+	for _, col := range meta.columns {
+		if stampedColumn(col) {
+			canonical[col] = stampFor(stamps, col, updatedAt)
+		}
+	}
+	out := make(map[string]any, len(row)+1)
+	for k, v := range row {
+		out[k] = v
+	}
+	out[fieldTSColumn] = canonical
+	return out
+}
+
 // mergeFields decides which of the incoming row's columns win against the row
 // the server holds. A column wins only when its stamp is STRICTLY newer, so an
 // exact tie keeps the incumbent — the same direction the client resolves a tie,
@@ -278,7 +323,7 @@ func mergeFields(meta tableMeta, incoming, existing map[string]any) (winners []s
 
 	merged = map[string]string{}
 	for _, col := range meta.columns {
-		if col == "id" || col == "server_seq" || col == "updated_at" {
+		if !stampedColumn(col) {
 			continue
 		}
 		exAt := stampFor(exStamps, col, exUpdated)
@@ -347,6 +392,9 @@ func (s *server) handlePush(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 
+			if meta.fieldMerge && existing == nil {
+				row = withCanonicalStamps(meta, row)
+			}
 			columns := presentColumns(meta, row)
 			if meta.fieldMerge && existing != nil {
 				winners, mergedStamps, changed := mergeFields(meta, row, existing)
