@@ -23,7 +23,7 @@
 // Bump this on any meaningful change to this file: `activate` only purges
 // caches whose name differs, so a constant name makes that step dead code and
 // lets a previous deploy's (or a poisoned) entry survive forever.
-const CACHE_NAME = 'planee-cache-v3';
+const CACHE_NAME = 'planee-cache-v4';
 
 // Everything under this prefix belongs to this app. Cache Storage is keyed by
 // ORIGIN, not by service-worker scope, so if two of these apps are ever served
@@ -41,6 +41,27 @@ const BASE = new URL(self.registration.scope).pathname; // always ends with '/'
 const ASSET_PREFIX = BASE + '_astro/';
 const SHELL = ['', 'project/', 'version/', 'task/', 'version_task/', 'asset/', 'preferences/', 'settings/', 'onboarding/', 'favicon.svg', 'manifest.webmanifest'].map((p) => BASE + p);
 
+// Self-hosted Excalidraw fonts (public/excalidraw/fonts, refreshed by
+// `npm run copy:excalidraw-fonts`). They live outside _astro/, so the crawl
+// below cannot discover them; they are seeded into it explicitly so drawings
+// render with the hand-drawn font offline. src/lib/sw.test.ts fails if this
+// list and the files on disk drift apart.
+const FONT_ASSETS = [
+  'excalidraw/fonts/Cascadia/CascadiaCode-Regular.woff2',
+  'excalidraw/fonts/Excalifont/Excalifont-Regular-349fac6ca4700ffec595a7150a0d1e1d.woff2',
+  'excalidraw/fonts/Excalifont/Excalifont-Regular-3f2c5db56cc93c5a6873b1361d730c16.woff2',
+  'excalidraw/fonts/Excalifont/Excalifont-Regular-41b173a47b57366892116a575a43e2b6.woff2',
+  'excalidraw/fonts/Excalifont/Excalifont-Regular-623ccf21b21ef6b3a0d87738f77eb071.woff2',
+  'excalidraw/fonts/Excalifont/Excalifont-Regular-a88b72a24fb54c9f94e3b5fdaa7481c9.woff2',
+  'excalidraw/fonts/Excalifont/Excalifont-Regular-b9dcf9d2e50a1eaf42fc664b50a3fd0d.woff2',
+  'excalidraw/fonts/Excalifont/Excalifont-Regular-be310b9bcd4f1a43f571c46df7809174.woff2',
+  'excalidraw/fonts/Nunito/Nunito-Regular-XRXI3I6Li01BKofiOc5wtlZ2di8HDIkhdTA3j6zbXWjgevT5.woff2',
+  'excalidraw/fonts/Nunito/Nunito-Regular-XRXI3I6Li01BKofiOc5wtlZ2di8HDIkhdTQ3j6zbXWjgeg.woff2',
+  'excalidraw/fonts/Nunito/Nunito-Regular-XRXI3I6Li01BKofiOc5wtlZ2di8HDIkhdTk3j6zbXWjgevT5.woff2',
+  'excalidraw/fonts/Nunito/Nunito-Regular-XRXI3I6Li01BKofiOc5wtlZ2di8HDIkhdTo3j6zbXWjgevT5.woff2',
+  'excalidraw/fonts/Nunito/Nunito-Regular-XRXI3I6Li01BKofiOc5wtlZ2di8HDIkhdTs3j6zbXWjgevT5.woff2',
+].map((p) => BASE + p);
+
 // Servers often send `Vary: Origin`, and module import() requests carry an
 // Origin header while our install-time fetches don't — without ignoreVary the
 // cache would refuse to serve cached chunks to module loads.
@@ -53,7 +74,13 @@ const NAV_OPTS = { ignoreVary: true, ignoreSearch: true };
 // Background-warm pacing: gap between fetches and a ceiling on how many the
 // crawl will pull, so a large bundle can't hammer the host.
 const WARM_DELAY_MS = 120;
-const WARM_MAX_ASSETS = 600;
+// Sized from the measured build (Phase 7, markdown editor included): 230
+// _astro files + 13 self-hosted Excalidraw fonts, plus 305 fetches the crawl
+// spends on false positives — string literals in bundled libraries that look
+// like relative specifiers ("./locales/de-DE.json", "./fonts/Virgil/…",
+// pica's "./mm_resize") and resolve to non-existent _astro/ paths, each a 404
+// that still counts as a fetch — then +25% headroom: ceil(548 × 1.25).
+const WARM_MAX_ASSETS = 685;
 
 /** Transient failures worth retrying (throttles and gateway hiccups). */
 const RETRY_STATUS = new Set([429, 500, 502, 503, 504]);
@@ -115,8 +142,8 @@ async function precacheShell() {
  */
 async function warmAssetCache() {
   const cache = await caches.open(CACHE_NAME);
-  const seen = new Set(SHELL);
-  const queue = [...SHELL];
+  const seen = new Set([...SHELL, ...FONT_ASSETS]);
+  const queue = [...SHELL, ...FONT_ASSETS];
   let fetched = 0;
 
   while (queue.length > 0 && fetched < WARM_MAX_ASSETS) {
@@ -152,7 +179,11 @@ async function warmAssetCache() {
     // Relative specifiers — note the bundler emits dynamic imports with
     // BACKTICKS, e.g. import(`./chunk.js`), so all three quote styles count.
     const from = new URL(url, self.location.origin);
-    for (const match of text.matchAll(/['"`](\.{1,2}\/[A-Za-z0-9_.\-/]+)['"`]/g)) {
+    // Only specifiers that name a loadable asset: bundled libraries are full
+    // of strings that merely LOOK relative ("./locales/de-DE.json",
+    // "./fonts/Virgil/…", "./mm_resize"), and each one would otherwise cost a
+    // paced 404 fetch against WARM_MAX_ASSETS.
+    for (const match of text.matchAll(/['"`](\.{1,2}\/[A-Za-z0-9_.\-/]+\.(?:m?js|css|woff2))['"`]/g)) {
       try {
         enqueue(new URL(match[1], from).pathname);
       } catch {

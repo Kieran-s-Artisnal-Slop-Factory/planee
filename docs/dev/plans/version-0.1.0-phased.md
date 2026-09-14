@@ -24,10 +24,10 @@ unchecked item.** Tick boxes as you go and commit this file with the work.
 - [x] Phase 4 — Data model changes (lockstep)
 - [x] Phase 5 — Generated CRUD pages + sync harness cases for the new schema
 - [x] **Checkpoint 2** → commit
-- [ ] Phase 6 — Port the kanban board from retoken *(parallel with 7 and 8)*
-- [ ] Phase 7 — Port retoken's markdown editor + preview, synced asset store *(parallel with 6 and 8)*
-- [ ] Phase 8 — GitHub Pages deploy *(parallel with 6 and 7)*
-- [ ] **Checkpoint 3** → commit
+- [x] Phase 6 — Port the kanban board from retoken *(parallel with 7 and 8)*
+- [x] Phase 7 — Port retoken's markdown editor + preview, synced asset store *(parallel with 6 and 8)*
+- [x] Phase 8 — GitHub Pages deploy *(parallel with 6 and 7)*
+- [x] **Checkpoint 3** → commit
 - [ ] Phase 9 — Board page, version completion, markdown fields everywhere (frontend ⇄ backend persistence)
 - [ ] Phase 10 — Board and markdown tests: two-device sync and real UI
 - [ ] **Checkpoint 4** → commit, then **stop**

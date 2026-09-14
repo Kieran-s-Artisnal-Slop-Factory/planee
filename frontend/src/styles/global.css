@@ -462,6 +462,115 @@ dialog::backdrop,
   margin-top: var(--space-2);
 }
 
+/* == markdown render (MarkdownPreview) == */
+/*
+ * Ported from retoken (af25bc6) src/styles/global.css: the rules the runtime
+ * markdown pipeline (src/lib/markdown/render.ts) relies on. The theme tokens
+ * they use (--editor-*, --syntax-*) are already in theme.css.
+ */
+
+/*
+ * Shiki dual-theme switching. Code is highlighted with a light AND a dark
+ * theme (`defaultColor: false`), so every token carries --shiki-light /
+ * --shiki-dark; light-dark() picks the pair matching the active scheme, which
+ * the scheme toggle pins via `color-scheme` on <html>.
+ */
+.astro-code {
+  background-color: light-dark(var(--shiki-light-bg), var(--shiki-dark-bg)) !important;
+}
+
+.astro-code,
+.astro-code span {
+  color: light-dark(var(--shiki-light), var(--shiki-dark));
+}
+
+/* remark-gfm's footnote section heading is screen-reader-only. */
+.prose .sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+}
+
+.prose .footnotes li {
+  /* So clicking a marker scrolls the note clear of the sticky navbar. */
+  scroll-margin-top: calc(var(--navbar-height) + var(--space-4));
+}
+
+.prose sup a[data-footnote-ref] {
+  font-weight: 700;
+}
+
+.prose sup a[data-footnote-ref]:hover {
+  text-decoration: underline;
+}
+
+.prose a[data-footnote-backref] {
+  text-decoration: none;
+  padding-left: var(--space-1);
+}
+
+/* KaTeX ships its own CSS; this is just overflow behaviour. */
+.prose .katex-display {
+  overflow-x: auto;
+  overflow-y: hidden;
+  padding: var(--space-1) 0;
+}
+
+/* Mermaid diagrams: the source until mermaid draws it, then the picture. */
+.prose pre.mermaid {
+  display: flex;
+  justify-content: center;
+  padding: var(--space-4);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  background: var(--surface-color);
+  overflow-x: auto;
+  font-family: var(--font-mono);
+  font-size: var(--font-size-sm);
+}
+
+.prose pre.mermaid svg {
+  max-width: 100%;
+  height: auto;
+}
+
+/* Rendered successfully — drop the code-block chrome, it's a picture now. */
+.prose pre.mermaid-rendered {
+  background: none;
+  border: none;
+  padding: 0;
+}
+
+/* Failed to parse: keep the source visible, name the problem above it. */
+.prose pre.mermaid-error {
+  display: block;
+  border-color: var(--color-danger);
+  border-left: 3px solid var(--color-danger);
+  background: var(--color-danger-soft);
+  white-space: pre-wrap;
+}
+
+.prose pre.mermaid-error::before {
+  content: '⚠ ' attr(data-error);
+  display: block;
+  margin-bottom: var(--space-2);
+  color: var(--color-danger);
+  font-family: var(--font-body);
+  font-weight: 600;
+  font-size: var(--font-size-sm);
+}
+
+/* An asset this device doesn't have (deleted, or not synced yet). */
+.prose img.asset-missing {
+  display: inline-block;
+  width: 3rem;
+  height: 3rem;
+  opacity: 0.6;
+  border-style: dashed;
+}
+
 /* == utilities == */
 .page {
   width: 100%;

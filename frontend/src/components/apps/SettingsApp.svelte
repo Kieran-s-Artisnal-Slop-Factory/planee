@@ -12,6 +12,7 @@
     getSyncMode,
     getSyncStatus,
     getSyncUrl,
+    isOfflineDefaultBuild,
     setSyncMode,
     setSyncUrl,
     syncNow,
@@ -35,10 +36,28 @@
   let status: SyncStatus = $state({ lastSyncAt: null, lastError: null, pending: 0 });
   let mode: 'offline' | 'sync' = $state('sync');
 
+  // A sub-path or offline-default build (GitHub Pages) has no sync server of
+  // its own: same-origin there is a static host.
+  const browserOnlyBuild = import.meta.env.BASE_URL !== '/' || isOfflineDefaultBuild();
+  // Browsers block fetches from an https page to an http server (mixed content),
+  // so an http:// URL can never work from an https copy of the app.
+  // (client:only component, so `location` always exists here.)
+  const pageIsHttps = location.protocol === 'https:';
+  let mixedContent = $derived(pageIsHttps && /^http:/i.test(url.trim()));
+
+  // With no URL saved, getSyncUrl() returns the same-origin base ('' at the
+  // root, '/planee' under a sub-path). Show that as an empty field so it
+  // matches the "empty = same-origin" placeholder instead of a bare path.
+  const SAME_ORIGIN = import.meta.env.BASE_URL.replace(/\/+$/, '');
+  function displayedSyncUrl(): string {
+    const current = getSyncUrl();
+    return current === SAME_ORIGIN ? '' : current;
+  }
+
   onMount(async () => {
     theme = localStorage.getItem(THEME_KEY) ?? 'auto';
     inDeveloperMode = sessionStorage.getItem(DEV_MODE_KEY) === '1';
-    url = getSyncUrl();
+    url = displayedSyncUrl();
     status = await getSyncStatus();
     mode = getSyncMode();
   });
@@ -57,14 +76,17 @@
     // Awaited: setSyncUrl resets the sync cursors when the server changes, and
     // that must complete before any subsequent "Sync now".
     await setSyncUrl(url);
-    url = getSyncUrl();
+    url = displayedSyncUrl();
     message = 'Server URL saved. Empty means same-origin (backend serves this app).';
+    if (mode === 'offline' && url) {
+      message += ' Sync is still off — choose "Sync enabled" to start syncing with it.';
+    }
     messageOk = true;
   }
 
   async function test() {
     busy = true;
-    const result = await testConnection(url);
+    const result = await testConnection(url.trim() || SAME_ORIGIN);
     message = result.message;
     messageOk = result.ok;
     busy = false;
@@ -178,6 +200,12 @@
 <div class="stack">
   <Card title="Sync server">
     <div class="stack">
+      {#if browserOnlyBuild}
+        <p class="muted small">
+          This copy of planee runs entirely in your browser. Data stays on this device until you
+          set a sync server below.
+        </p>
+      {/if}
       <div class="row">
         <button
           class="btn"
@@ -200,7 +228,15 @@
           id="sync-url"
           placeholder="http://localhost:8228 (empty = same-origin)"
           bind:value={url}
+          aria-describedby={mixedContent ? 'sync-url-warning' : undefined}
         />
+        {#if mixedContent}
+          <p id="sync-url-warning" class="warn" role="alert">
+            This page is served over https, so browsers block requests to an <code>http://</code>
+            server (mixed content). Use an <code>https://</code> server URL, or open planee from the
+            backend itself.
+          </p>
+        {/if}
       </div>
       <div class="row">
         <button class="btn btn-primary" onclick={saveUrl} disabled={busy}>Save</button>
@@ -339,6 +375,15 @@
   }
 
   .small {
+    font-size: var(--font-size-sm);
+  }
+
+  .warn {
+    margin-top: var(--space-2);
+    padding: var(--space-2) var(--space-3);
+    border-left: 3px solid var(--color-warning);
+    background: var(--color-warning-soft);
+    border-radius: var(--radius-sm);
     font-size: var(--font-size-sm);
   }
 
