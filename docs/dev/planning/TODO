@@ -1,4 +1,34 @@
-- [ ] Add your first task here
+# Version 0.1.0 plans
+
+Before beginning make sure the VERSION is up to date, and create a file called `docs/dev/plans/version-<version number>-phased.md` which is a phased plan for implementing the features, then stop after creating it. If that file exists, the that means the version has been started and you're taking over from where another agent left off. If it doesn't then create the file making sure to also create "checkpoints" which are points after a few phases where the full test suite is ran, and must pass before proceeding. You don't need to run the full tests on every phase because it's going to be too slow. For each checkpoint, if it's not going to trample one another, feel free to use subagents, in fact ideally you should.
+
+Additional things to keep in mind:
+- Usability takes priority over accessibilty when the two collide. This app is a personal app, primarily used by me, not one being shared with people who have accessibility needs. It's nice for it to be usable, but not at the cost of functionality or performance.
+- When documenting features, in the `dev` docs be sure to include mermaid diagrams, and code references to make it clear and simple for people to find what they need to understand.
+
+## Maintenance
+
+- [ ] Check all dependencies and do updates
+  - [ ] Frontend
+  - [ ] Backend
+  - [ ] CI
+
+## Features & fixes
+
+- [ ] Port kanban board from retoken
+- [ ] Create backend connection so updates are persisted across from frontend to backend
+- [ ] Copy the github pages deploy template from retemplate
+
+## For human
+
+This section is for me to keep track of what I need to manually review, feel free to add to this
+
+- [x] Review `docs/dev/plans/version-0.1.0-phased.md` decisions (answered 2026-09-13, recorded as D1–D15)
+- [ ] Work is on branch `version-0.1.0` (one commit per checkpoint); merge into `master` when happy
+- [ ] No git remote is configured; workflows assume `master` and `descent098/planee` (git metadata lists `main` as the main branch)
+- [ ] Local Go is 1.24.5 but `backend/go.mod` requires 1.25 (toolchain auto-download covers it; consider upgrading)
+
+## Per change
 
 Ensure for each change:
 

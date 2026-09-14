@@ -26,9 +26,16 @@ Serve `dist/` with the backend via `STATIC_DIR=../frontend/dist go run .`.
 
 ```sh
 npx astro check                   # type-check the app
+npm run test:unit                 # vitest: pure logic in src/**/*.test.ts
 npx playwright install chromium   # once
-npm test
+npm run test:sync                 # two-device sync harness (builds frontend + backend)
+npm test                          # unit, then sync
 ```
+
+`src/lib/lockfile.test.ts` guards `package-lock.json`: running `npm install` on
+Windows can silently drop the `@emnapi/*` wasm-runtime entries, which breaks
+`npm ci` on Linux (CI, Docker, the Pages deploy). If it fails, restore those
+entries rather than deleting the test (see the `"//"` note in package.json).
 
 ## Writing data
 

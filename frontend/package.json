@@ -10,7 +10,10 @@
     "build": "astro build",
     "preview": "astro preview",
     "astro": "astro",
-    "test": "playwright test",
+    "check": "astro check",
+    "test": "vitest run && playwright test",
+    "test:unit": "vitest run",
+    "test:unit:watch": "vitest",
     "test:sync": "playwright test",
     "test:sync:ui": "playwright test --ui"
   },
@@ -23,7 +26,28 @@
   },
   "devDependencies": {
     "@astrojs/check": "^0.9.10",
+    "@emnapi/core": "^1.11.3",
+    "@emnapi/runtime": "^1.11.3",
+    "@emnapi/wasi-threads": "^1.2.3",
+    "@napi-rs/wasm-runtime": "^1.2.4",
     "@playwright/test": "^1.63.0",
-    "@types/node": "^26.5.1"
+    "@types/node": "^26.5.1",
+    "vitest": "^5.0.0"
+  },
+  "//": [
+    "The @emnapi/* + @napi-rs/wasm-runtime devDependencies and the overrides",
+    "below pin the wasm32-wasi fallback runtime used by rolldown (vite) and",
+    "the Astro compiler. Their packages are optional peers that npm silently",
+    "drops from package-lock.json when the lock regenerates on a machine",
+    "where they were never installed (npm/cli#4828) — which then breaks",
+    "`npm ci` in CI and the Pages deploy. Keeping them as real root deps (and",
+    "deduping every consumer onto them via overrides) makes them impossible",
+    "to drop. Guarded by src/lib/lockfile.test.ts."
+  ],
+  "overrides": {
+    "@emnapi/core": "$@emnapi/core",
+    "@emnapi/runtime": "$@emnapi/runtime",
+    "@emnapi/wasi-threads": "$@emnapi/wasi-threads",
+    "@napi-rs/wasm-runtime": "$@napi-rs/wasm-runtime"
   }
 }

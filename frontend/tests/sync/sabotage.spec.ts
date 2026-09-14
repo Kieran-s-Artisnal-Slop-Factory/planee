@@ -1,7 +1,7 @@
 import { test, expect } from './helpers/devices';
 import type { Device } from './helpers/devices';
 import { assertConverged, assertFieldEverywhere, assertInvariants, capture } from './helpers/oracle';
-import { SYNCED_TABLES, buildRow, sampleValue, tableOf } from './helpers/schema';
+import { SYNCED_TABLES, buildRow, sampleValue, seedParents, tableOf } from './helpers/schema';
 
 /**
  * The trust gate: twelve deliberate faults, each of which the oracle MUST
@@ -38,18 +38,25 @@ test('sabotage: a store dropped from the push is detected', async ({ deviceA, de
 });
 
 test('sabotage: a field nulled on the wire is detected', async ({ deviceA, deviceB, backend }) => {
-  const col = table.columns.find((c) => c.nullable && !c.references);
-  test.skip(!col, 'no nullable non-FK column on ' + T);
+  // Any table with a nullable non-FK column will do. Skipping when the default
+  // table lacks one silently shrinks the trust gate, so search them all; a
+  // schema with no nullable column anywhere is the only legitimate miss.
+  const target = SYNCED_TABLES.find((t) => !t.singleton && t.columns.some((c) => c.nullable && !c.references));
+  expect(target, 'no synced table has a nullable non-FK column to sabotage').toBeDefined();
+  const nulled = target!;
+  const col = nulled.columns.find((c) => c.nullable && !c.references);
   const intended = sampleValue(col!, 1);
-  await deviceA.call('repoPut', T, { ...buildRow(table, 's2', {}, 1), [col!.name]: intended });
+  // Parents first, so the row is valid apart from the injected fault.
+  const parents = await seedParents(nulled, 's2', async (store, row) => {
+    await deviceA.call('repoPut', store, row);
+  });
+  await deviceA.call('repoPut', nulled.name, { ...buildRow(nulled, 's2', parents, 1), [col!.name]: intended });
 
   await deviceA.page.route('**/sync/push', async (route) => {
     const body = JSON.parse(route.request().postData() ?? '{}') as {
       rows: Record<string, Record<string, unknown>[]>;
     };
-    for (const rows of Object.values(body.rows ?? {})) {
-      for (const row of rows) row[col!.name] = null;
-    }
+    for (const row of body.rows?.[nulled.name] ?? []) row[col!.name] = null;
     await route.continue({ postData: JSON.stringify(body) });
   });
   await deviceA.sync();
@@ -61,7 +68,7 @@ test('sabotage: a field nulled on the wire is detected', async ({ deviceA, devic
   // All four legs now AGREE — on the erased value. Convergence alone is fooled;
   // only the intended-value check sees it, which is why every field case in
   // field-matrix.spec.ts asserts against the value the test meant to write.
-  expect(() => assertFieldEverywhere(legs, T, 's2', col!.name, intended)).toThrow();
+  expect(() => assertFieldEverywhere(legs, nulled.name, 's2', col!.name, intended)).toThrow();
 });
 
 test('sabotage: a retyped value is detected', async ({ deviceA, deviceB, backend }) => {
