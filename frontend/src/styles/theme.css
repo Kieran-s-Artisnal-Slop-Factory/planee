@@ -1,0 +1,198 @@
+/*
+ * planee — design tokens.
+ *
+ * Based on retemplate's "detailed" palette — this file is that template's
+ * css/theme.css, verbatim (https://github.com/Kieran-s-Artisnal-Slop-Factory/retemplate).
+ * The app's components use only the
+ * semantic tokens it maps, so everything the template documents at
+ * https://kieranwood.ca/retemplate/templates/detailed/docs/index.html is
+ * available here: its type, spacing, shape, palette and its own --detailed-*
+ * tokens. Layout.astro sets data-theme="detailed" on <html> and links the
+ * template's fonts.
+ *
+ * Colours are the template's own — no builder overrides were needed.
+ */
+
+/*
+ * detailed: design tokens.
+ *
+ * Retoken compatible: the same two layers retoken uses. The colour mapping
+ * under `:root, .themed` is retoken's verbatim; the shared values are this
+ * template's; the palette block is the retoken paste-in (docs/theme.html).
+ *
+ * Art deco. Cream and black ink with a bronze accent by day; deep navy with
+ * gold by night. The navbar, the top bar and the footer are dark bands in
+ * both halves, because brass belongs on black. Bright gold is an ornament
+ * token, kept for rules, sunbursts and large display type; the accent that
+ * carries small text is a darker bronze so it reads.
+ */
+
+:root,
+.themed {
+  color-scheme: light dark;
+
+  /* ── Brand ─────────────────────────────────────────────────────────── */
+  --color-primary: var(--pal-accent);
+  --color-primary-strong: var(--pal-accent-strong);
+  --color-primary-soft: color-mix(in srgb, var(--pal-accent) 14%, var(--pal-bg0));
+  --color-on-primary: var(--pal-on-accent);
+
+  /* ── Surfaces ──────────────────────────────────────────────────────── */
+  --bg-color: var(--pal-bg0);
+  --surface-color: var(--pal-bg0-soft);
+  --surface-raised-color: var(--pal-bg1);
+  --border-color: var(--pal-bg2);
+
+  /* ── Text ──────────────────────────────────────────────────────────── */
+  --text-color: var(--pal-fg);
+  --text-muted-color: var(--pal-fg-muted);
+
+  /* ── Feedback ──────────────────────────────────────────────────────── */
+  --color-success: var(--pal-green);
+  --color-success-soft: color-mix(in srgb, var(--pal-green) 14%, var(--pal-bg0));
+  --color-danger: var(--pal-red);
+  --color-danger-soft: color-mix(in srgb, var(--pal-red) 12%, var(--pal-bg0));
+  --color-warning: var(--pal-yellow);
+  --color-warning-soft: color-mix(in srgb, var(--pal-yellow) 14%, var(--pal-bg0));
+  --color-info: var(--pal-blue);
+  --color-info-soft: color-mix(in srgb, var(--pal-blue) 14%, var(--pal-bg0));
+
+  /* ── Editor / syntax ───────────────────────────────────────────────── */
+  --editor-bg: var(--pal-bg0-soft);
+  --editor-gutter-bg: var(--pal-bg1);
+  --editor-gutter-fg: var(--pal-gray);
+  --editor-active-line: color-mix(in srgb, var(--pal-bg1) 60%, transparent);
+  --editor-selection: color-mix(in srgb, var(--pal-bg2) 75%, transparent);
+  --editor-cursor: var(--pal-accent);
+  --editor-chrome-color: color-mix(in srgb, var(--pal-fg) 80%, transparent);
+  --syntax-keyword: var(--pal-red);
+  --syntax-string: var(--pal-green);
+  --syntax-number: var(--pal-purple);
+  --syntax-comment: var(--pal-gray);
+  --syntax-type: var(--pal-yellow);
+  --syntax-operator: var(--pal-aqua);
+  --syntax-name: var(--pal-blue);
+  --syntax-punctuation: var(--pal-fg-muted);
+  --editor-tooltip-bg: var(--pal-bg0-soft);
+  --editor-tooltip-fg: var(--pal-fg);
+  --editor-tooltip-border: var(--pal-bg3);
+  --editor-tooltip-selected-bg: var(--color-primary);
+  --editor-tooltip-selected-fg: var(--color-on-primary);
+  --editor-match-fg: var(--color-primary-strong);
+
+  /* ── Elevation ─────────────────────────────────────────────────────── */
+  --shadow-1: 0 1px 2px var(--pal-shadow-1);
+  --shadow-2: 0 8px 24px var(--pal-shadow-2);
+
+  /* ── Typography ────────────────────────────────────────────────────── */
+  --font-body: Jost, Futura, 'Century Gothic', 'Segoe UI', 'Helvetica Neue', Arial, sans-serif;
+  --font-mono: ui-monospace, 'Cascadia Code', 'Source Code Pro', Menlo, Consolas, monospace;
+  --font-display: Limelight, 'Copperplate Gothic', Copperplate, Futura, 'Century Gothic', Georgia, serif;
+  --font-weight-display: 400;
+  --font-size-sm: 0.875rem;
+  --font-size-base: 1.0625rem;
+  --font-size-lg: 1.2rem;
+  --font-size-xl: 1.5rem;
+  --font-size-2xl: 2rem;
+  --font-size-3xl: 2.5rem;
+  --font-size-hero: clamp(2.1rem, 1.3rem + 2.9vw, 3.8rem);
+  --line-height: 1.6;
+
+  /* ── Spacing ───────────────────────────────────────────────────────── */
+  --space-1: 0.25rem;
+  --space-2: 0.5rem;
+  --space-3: 0.75rem;
+  --space-4: 1rem;
+  --space-5: 1.5rem;
+  --space-6: 2.5rem;
+
+  /* ── Shape ─────────────────────────────────────────────────────────── */
+  --radius-sm: 0;
+  --radius-md: 0;
+  --radius-lg: 0;
+  --radius-full: 999px;
+
+  /* ── Layout ────────────────────────────────────────────────────────── */
+  --page-max-width: 64rem;
+  --sidebar-width: 16rem;
+  --panel-width: 18rem;
+  --toc-width: 15rem;
+  --navbar-height: 3.75rem;
+}
+
+/* ── Palette: detailed ──────────────────────────────────────────────────
+ * Cream, black ink and a bronze accent by day. Deep navy, cream text and a
+ * gold accent by night. The bright gold that decorates both halves is a
+ * template token below, not a slot, because on cream it is ornament only.
+ *
+ * This block is the retoken paste-in. Copy it whole.
+ */
+:root[data-theme='detailed'],
+[data-theme='detailed'] {
+  --pal-bg0: light-dark(#f3ead8, #0d1220);
+  --pal-bg0-soft: light-dark(#faf5e8, #131a2c);
+  --pal-bg1: light-dark(#eadfc6, #1a2238);
+  --pal-bg2: light-dark(#d3c39c, #34405c);
+  --pal-bg3: light-dark(#b8a374, #4d5878);
+
+  --pal-fg: light-dark(#14121a, #efe6d2);
+  --pal-fg-muted: light-dark(#5c5142, #b9ae94);
+  --pal-gray: light-dark(#8a7d66, #7f8699);
+
+  --pal-red: light-dark(#a3342a, #e08a7a);
+  --pal-green: light-dark(#3f6b3a, #9cc98a);
+  --pal-yellow: light-dark(#8a6414, #e2c46b);
+  --pal-blue: light-dark(#2f5375, #8fb0dc);
+  --pal-purple: light-dark(#5f4270, #b79ad0);
+  --pal-aqua: light-dark(#2b6a66, #8dc7c0);
+
+  --pal-accent: light-dark(#7a5a12, #d4af37);
+  --pal-accent-strong: light-dark(#5c4309, #e8c65a);
+  --pal-on-accent: light-dark(#f3ead8, #0d1220);
+
+  --pal-shadow-1: light-dark(rgb(20 18 26 / 0.12), rgb(0 0 0 / 0.5));
+  --pal-shadow-2: light-dark(rgb(20 18 26 / 0.22), rgb(0 0 0 / 0.65));
+}
+
+/* ── Template tokens ────────────────────────────────────────────────────
+ * The ornament gold and the brass; the dark band the navbar, top bar,
+ * footer and lightbox sit on in both halves; the sunburst rays behind the
+ * top of every page; the chevron rule as a mask; the stepped corner as a
+ * clip-path; the gold-leaf sheen of the feature card. Not part of the
+ * retoken paste-in.
+ */
+:root,
+.themed {
+  /* Ornament gold: rules, sunbursts, frames and large display type only.
+   * On cream it is 2.5:1, so it never carries small text. */
+  --detailed-gold: light-dark(#b8902e, #d4af37);
+  --detailed-gold-soft: light-dark(rgb(184 144 46 / 0.18), rgb(212 175 55 / 0.14));
+  --detailed-brass: light-dark(#8c6d2a, #b08d3c);
+
+  /* The band: black by day, blacker navy by night. Cream and gold on it. */
+  --detailed-band: light-dark(#14121a, #080b14);
+  --detailed-band-raised: light-dark(#221f2a, #111726);
+  --detailed-on-band: light-dark(#f3ead8, #efe6d2);
+  --detailed-on-band-muted: light-dark(#b8a882, #a99f86);
+  --detailed-band-gold: #d4af37;
+  --detailed-band-line: rgb(212 175 55 / 0.45);
+
+  /* Rays fanning down from the top centre of the viewport, fading out under
+   * half a viewport down, at any width. Two layers on body, fixed. */
+  --detailed-rays: repeating-conic-gradient(from 270deg at 50% 0%, var(--detailed-gold-soft) 0deg 1deg, transparent 1deg 6deg);
+  --detailed-rays-fade: radial-gradient(120vw 42vh at 50% 0%, transparent 20%, var(--pal-bg0) 100%);
+
+  /* A caps face for kickers, nav, badges, buttons and small headings. */
+  --detailed-font-caps: 'Josefin Sans', Futura, 'Century Gothic', 'Trebuchet MS', sans-serif;
+
+  /* The chevron rule: hairlines from each edge, two chevrons and a diamond
+   * at the centre. A mask, filled with gold. */
+  --detailed-chevron: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 240 24'%3E%3Cpath d='M0 11.5h88v1H0zM152 11.5h88v1h-88z' fill='%23000'/%3E%3Cpath d='M96 5l7 7-7 7' fill='none' stroke='%23000' stroke-width='1.4'/%3E%3Cpath d='M102 5l7 7-7 7' fill='none' stroke='%23000' stroke-width='1.4'/%3E%3Cpath d='M144 5l-7 7 7 7' fill='none' stroke='%23000' stroke-width='1.4'/%3E%3Cpath d='M138 5l-7 7 7 7' fill='none' stroke='%23000' stroke-width='1.4'/%3E%3Cpath d='M120 4l8 8-8 8-8-8z' fill='%23000'/%3E%3C/svg%3E");
+
+  /* Stepped corners, two steps of 7px at the top. The same polygon on an
+   * element and on the image inside it gives a frame of even width. */
+  --detailed-steps: polygon(0 14px, 7px 14px, 7px 7px, 14px 7px, 14px 0, calc(100% - 14px) 0, calc(100% - 14px) 7px, calc(100% - 7px) 7px, calc(100% - 7px) 14px, 100% 14px, 100% 100%, 0 100%);
+
+  /* The gold-leaf sheen that sweeps the feature card on hover. */
+  --detailed-sheen: linear-gradient(105deg, transparent 35%, rgb(255 226 140 / 0.28) 45%, rgb(255 246 214 / 0.65) 50%, rgb(255 226 140 / 0.28) 55%, transparent 65%);
+}

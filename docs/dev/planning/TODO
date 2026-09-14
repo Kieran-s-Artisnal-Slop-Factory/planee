@@ -1,0 +1,41 @@
+- [ ] Add your first task here
+
+Ensure for each change:
+
+- if data model is updated
+    - There are no sync issues/regressions with the changes
+    - The schema is updated in every place it lives, together:
+        1. `backend/sql/schema.sql` — the DDL (applied to fresh databases only).
+        2. `backend/sync.go` — `tableOrder` + `tables` metadata.
+        3. `frontend/src/lib/db/types.ts` — entity interfaces + store map.
+        4. A new migration appended in `frontend/src/lib/db/db.ts` (never edit
+           a shipped migration).
+        5. `frontend/tests/sync/helpers/schema.ts` — the harness's own schema
+           mirror, so `field-matrix.spec.ts` keeps covering every column.
+      A NEW table also needs its page (`frontend/src/pages/<table>.astro` +
+      `frontend/src/components/apps/<Table>App.svelte`), a Navbar link
+      (`frontend/src/components/Navbar.svelte`) and a `SHELL` entry in
+      `frontend/public/sw.js` — without the last one the page works online and
+      404s offline.
+      An ENUM table's values live in two places that must agree: the
+      `INSERT OR IGNORE` seed in `backend/sql/schema.sql` and the
+      `<NAME>_VALUES` const in `frontend/src/lib/db/types.ts`. Changing them
+      is a schema change: append a `db.ts` migration that calls `seedEnum`
+      again, and run the same INSERTs against existing server databases.
+    - There are adequate tests to ensure no synchronization issues, and that the
+      system works both from the UI and under the automated tests. Run them
+      with `cd frontend && npm run test:sync`.
+      The harness in `frontend/tests/sync/` drives two browser contexts
+      against a real server with a four-leg oracle, plus a sabotage suite that
+      must go red before any green is believed.
+    - Features that touch frontend and backend have testing and validation for both pieces
+- Add Changes to the CHANGELOG.md
+    - If a version exists and does not have a release date yet, keep adding to it, if there's no versions without a release date, then bump version (e.g. `0.1.0 -> 0.2.0`) in the VERSION file, and add a new main heading to CHANGELOG.md for it (e.g. `0.2.0 (unreleased)`) and add the changes under there.
+    - Add all changes under the following categories as sub-headings:
+      - Features
+      - Bug Fixes
+      - Other
+        - For things like
+          - Documentation improvements
+          - Refinements to existing systems that weren't bugs
+          - anything else that doesn't fit in the other sections

@@ -1,0 +1,11 @@
+dist/
+.astro/
+node_modules/
+npm-debug.log*
+.DS_Store
+
+# Playwright
+test-results/
+playwright-report/
+tests/**/.results/
+tests/**/.bin/

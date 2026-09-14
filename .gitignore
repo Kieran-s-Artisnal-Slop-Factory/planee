@@ -1,0 +1,7 @@
+backend/*.db
+backend/*.db-shm
+backend/*.db-wal
+frontend/dist/
+frontend/.astro/
+frontend/node_modules/
+.DS_Store

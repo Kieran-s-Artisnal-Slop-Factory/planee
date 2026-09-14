@@ -1,0 +1,10 @@
+.git
+.github
+data
+frontend/node_modules
+frontend/dist
+frontend/.astro
+backend/*.db
+backend/*.db-shm
+backend/*.db-wal
+backend/*.exe

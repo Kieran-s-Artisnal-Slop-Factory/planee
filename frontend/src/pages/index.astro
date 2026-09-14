@@ -1,0 +1,8 @@
+---
+import Layout from '../layouts/Layout.astro';
+import HomeApp from '../components/apps/HomeApp.svelte';
+---
+
+<Layout title="Home">
+  <HomeApp client:only="svelte" />
+</Layout>

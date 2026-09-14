@@ -1,0 +1,111 @@
+---
+import '../styles/theme.css';
+import '../styles/global.css';
+import { href } from '../lib/paths';
+import Navbar from '../components/Navbar.svelte';
+
+interface Props {
+  title: string;
+}
+
+const { title } = Astro.props;
+const currentPath = Astro.url.pathname;
+// Base-aware paths for the inline scripts / static links below (works whether
+// the app is served at the root or under a sub-path like GitHub Pages).
+const swPath = href('/sw.js');
+const onboardingPath = href('/onboarding/');
+---
+
+<!doctype html>
+<html lang="en" data-theme="detailed" data-sw-path={swPath}>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="light dark" />
+    <meta name="description" content="planee — local-first app" />
+    <link rel="icon" href={href('/favicon.svg')} type="image/svg+xml" />
+    <link rel="manifest" href={href('/manifest.webmanifest')} />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Limelight&family=Josefin+Sans:wght@400;600;700&family=Jost:ital,wght@0,300;0,400;0,500;1,400&display=swap" />
+    <title>{title} · planee</title>
+    <script is:inline>
+      // Apply the stored scheme before first paint to avoid a flash. retoken's
+      // model exactly: localStorage['retoken-scheme'] is 'light' or 'dark', or
+      // absent for "follow the OS" — so this app and a retoken/retemplate site
+      // on the same origin agree. The *effective* scheme is mirrored to
+      // <html data-scheme> for anything light-dark() cannot switch.
+      try {
+        const scheme = localStorage.getItem('retoken-scheme');
+        const pinned = scheme === 'light' || scheme === 'dark' ? scheme : '';
+        document.documentElement.style.colorScheme = pinned;
+        document.documentElement.dataset.scheme =
+          pinned || (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
+      } catch {}
+    </script>
+    <script is:inline define:vars={{ onboardingPath }}>
+      // First-run gate: send new users through onboarding once (MPA — runs on
+      // every page). Storage failures fall through to the app rather than
+      // trapping the user in a redirect loop. Paths are base-aware so this
+      // works under a sub-path deploy too.
+      try {
+        const p = location.pathname.replace(/\/+$/, '');
+        const target = onboardingPath.replace(/\/+$/, '');
+        if (p !== target && !localStorage.getItem('planee-onboarded')) {
+          location.replace(onboardingPath);
+        }
+      } catch {}
+    </script>
+  </head>
+  <body>
+    <script>
+      // Test hook: fetched ONLY when the test-mode flag is set on this profile,
+      // so a real user never downloads it. See src/lib/testMode.ts.
+      //
+      // A hoisted (bundled) script, not `is:inline`: Vite has to see this
+      // dynamic import to turn it into a chunk. Inline, the browser would
+      // request the literal "../lib/testHook.ts" — a 404 in every production
+      // build, and the harness's hook silently never installed.
+      import { isTestMode } from '../lib/testMode';
+      if (isTestMode()) {
+        import('../lib/testHook').then((m) => m.installTestHook());
+      }
+    </script>
+    <Navbar client:load {currentPath} />
+    <main class="page">
+      <slot />
+    </main>
+    {
+      import.meta.env.PROD ? (
+        <script is:inline>
+          if ('serviceWorker' in navigator) {
+            window.addEventListener('load', () => {
+              // The base-aware SW path is on <html data-sw-path>; registering
+              // it there also sets the worker's scope to the base.
+              navigator.serviceWorker
+                .register(document.documentElement.dataset.swPath)
+                .catch(() => {});
+            });
+          }
+        </script>
+      ) : (
+        <script is:inline>
+          // Dev: the service worker must NOT run — it caches Vite's module
+          // URLs and serves stale code after edits (blank pages). Unregister
+          // any leftover registration and drop its caches.
+          if ('serviceWorker' in navigator) {
+            navigator.serviceWorker.getRegistrations().then((regs) => {
+              for (const reg of regs) reg.unregister();
+            });
+            if (window.caches) {
+              // Only ours: this page may share an origin with other apps (a
+              // path-multiplexing gateway serves several under one host), and
+              // dropping their caches is not this dev-teardown's business.
+              caches.keys().then((keys) => keys.filter((k) => k.startsWith('planee-cache-')).forEach((k) => caches.delete(k)));
+            }
+          }
+        </script>
+      )
+    }
+  </body>
+</html>

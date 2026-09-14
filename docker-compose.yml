@@ -1,0 +1,25 @@
+# Ready-to-go deployment using the prebuilt image from GHCR.
+#
+#   docker compose up -d          # pulls ghcr.io/descent098/planee:latest
+#
+# The app (frontend + sync API, one origin) is served on host port 8228,
+# with the SQLite database bind-mounted to ./data on the host.
+#
+# To build the image from source instead, use docker-compose.build.yml.
+services:
+  planee:
+    image: ghcr.io/descent098/planee:latest
+    # Pin to a release instead of a moving tag for reproducible deploys, e.g.
+    #   image: ghcr.io/descent098/planee:v1.0.0
+    ports:
+      # host:container — change the left side to serve elsewhere, e.g.
+      #   "80:8228"   plain HTTP   |   "127.0.0.1:8228:8228"  localhost only
+      - "8228:8228"
+    environment:
+      DB_PATH: /data/planee.db
+      PORT: "8228"
+    volumes:
+      # Host ./data <-> container /data. planee.db (+ -wal/-shm) appear here as
+      # real files you can back up — recreating the container never touches them.
+      - ./data:/data
+    restart: unless-stopped

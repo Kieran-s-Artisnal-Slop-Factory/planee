@@ -1,0 +1,8 @@
+---
+import Layout from '../layouts/Layout.astro';
+import TaskApp from '../components/apps/TaskApp.svelte';
+---
+
+<Layout title="Task">
+  <TaskApp client:only="svelte" />
+</Layout>

@@ -1,0 +1,8 @@
+---
+import Layout from '../layouts/Layout.astro';
+import ProjectApp from '../components/apps/ProjectApp.svelte';
+---
+
+<Layout title="Project">
+  <ProjectApp client:only="svelte" />
+</Layout>

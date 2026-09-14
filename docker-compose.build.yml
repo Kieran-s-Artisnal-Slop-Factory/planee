@@ -1,0 +1,22 @@
+# Build the image from source in this checkout (development, or to run without
+# pulling from GHCR).
+#
+#   docker compose -f docker-compose.build.yml up --build
+#
+# Same runtime shape as docker-compose.yml: DB bind-mounted to ./data, app on
+# host port 8228.
+services:
+  planee:
+    build: .
+    ports:
+      # host:container — change the left side to serve elsewhere, e.g.
+      #   "80:8228"   plain HTTP   |   "127.0.0.1:8228:8228"  localhost only
+      - "8228:8228"
+    environment:
+      DB_PATH: /data/planee.db
+      PORT: "8228"
+    volumes:
+      # Host ./data <-> container /data. planee.db (+ -wal/-shm) appear here as
+      # real files you can back up — recreating the container never touches them.
+      - ./data:/data
+    restart: unless-stopped

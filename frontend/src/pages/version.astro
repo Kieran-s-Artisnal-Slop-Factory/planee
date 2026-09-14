@@ -1,0 +1,8 @@
+---
+import Layout from '../layouts/Layout.astro';
+import VersionApp from '../components/apps/VersionApp.svelte';
+---
+
+<Layout title="Version">
+  <VersionApp client:only="svelte" />
+</Layout>
