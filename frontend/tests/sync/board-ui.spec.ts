@@ -17,6 +17,7 @@ import {
   columnLocator,
   dragCard,
   dragWhileRenaming,
+  expectBoardUrl,
   expectSettledCard,
   openBoard,
   openCardDialog,
@@ -24,7 +25,9 @@ import {
   seedProject,
   syncAll,
   topOfColumn,
+  urlParts,
   waitForBoard,
+  waitForHook,
 } from './helpers/board';
 
 /**
@@ -38,21 +41,32 @@ import {
  * delta and the structural invariants.
  */
 
-test('home -> new project -> composer card -> drag TODO to In Progress, stored, queued, survives reload, synced', async ({
+test('FAB -> new project -> composer card -> drag TODO to In Progress, stored, queued, survives reload, synced', async ({
   deviceA,
   deviceB,
   backend,
 }) => {
   const page = deviceA.page;
 
-  // Create the project on Home: it lands on its board, on version 0.1.0.
-  await page.getByTestId('home-new-project-name').fill('Launch plan');
-  await page.getByTestId('home-new-project-create').click();
-  await page.waitForURL(/\/board\/\?project=/);
-  await page.waitForFunction(() => Boolean((window as never)['__planee']));
-  const url = new URL(page.url());
-  const projectId = url.searchParams.get('project')!;
-  const versionId = url.searchParams.get('version')!;
+  // An empty Home points at creating a project.
+  await expect(page.getByTestId('board-empty')).toBeVisible();
+
+  // Create the project through the FAB: it lands on its board (Home), on version 0.1.0.
+  await page.getByTestId('fab').click();
+  await page.getByTestId('fab-new-project').click();
+  const create = page.getByTestId('create-dialog');
+  await expect(create).toHaveAttribute('data-kind', 'project');
+  await expect(create.getByTestId('project-create-first-version')).toBeChecked();
+  await create.getByTestId('project-create-name').fill('Launch plan');
+  await create.getByTestId('project-create-submit').click();
+  // The FAB navigates to `/?project=`; the board then adds the version it chose.
+  await page.waitForURL(/\/\?project=[^&]+&version=[^&]+$/);
+  await waitForHook(page);
+  const { path, params } = urlParts(page);
+  expect(path).toBe('/');
+  expect(Object.keys(params).sort()).toEqual(['project', 'version']);
+  const projectId = params.project!;
+  const versionId = params.version!;
   await waitForBoard(page, projectId, versionId);
   await expect(page.getByTestId('board-version-title')).toHaveText('Version 0.1.0');
   expect(await deviceA.get('project', projectId)).toMatchObject({ name: 'Launch plan' });
@@ -86,8 +100,12 @@ test('home -> new project -> composer card -> drag TODO to In Progress, stored, 
   const outbox = await deviceA.outbox();
   expect(outbox.map((e) => e.key)).toEqual(expect.arrayContaining(['version_task:' + linkId, 'task:' + taskId]));
 
-  // A reload reads it back from IndexedDB, not from the board's memory.
-  await deviceA.goto(`/board/?project=${projectId}&version=${versionId}`);
+  // A reload reads it back from IndexedDB, not from the board's memory — and
+  // an old `/board/` link still lands on the same board, query kept (D17).
+  await page.goto(backend.url + `/board/?project=${projectId}&version=${versionId}`);
+  await page.waitForURL(backend.url + `/?project=${projectId}&version=${versionId}`);
+  await waitForHook(page);
+  expect(urlParts(page)).toEqual({ path: '/', params: { project: projectId, version: versionId } });
   await waitForBoard(page, projectId, versionId);
   await expectSettledCard(page, 'in_progress', linkId);
   await expect(cardIn(page, 'todo', linkId)).toHaveCount(0);
@@ -181,11 +199,13 @@ test("resolution: Won't fix set in the dialog survives a reorder within Done", a
   const before = await capture(deviceA, deviceB, backend);
 
   const dialog = await openCardDialog(page, 'res-moved');
+  await expectBoardUrl(page, { project: 'res-p', version: 'res-v', task: 'res-t2' });
   await dialog.getByTestId('card-resolution-select').selectOption('wontfix');
   await pollRow(deviceA, 'version_task', 'res-moved', (r) => r?.status === 'wontfix', "the dialog stored wontfix");
   await expect(dialog.getByTestId('card-resolution')).toHaveAttribute('data-status', 'wontfix');
   await dialog.locator('.close').click();
   await expect(dialog).toHaveCount(0);
+  await expectBoardUrl(page, { project: 'res-p', version: 'res-v' });
   const badge = cardIn(page, 'done', 'res-moved').getByTestId('card-resolution');
   await expect(badge).toHaveAttribute('data-status', 'wontfix');
 

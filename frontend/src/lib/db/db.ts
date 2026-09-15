@@ -8,7 +8,7 @@
  */
 import { openDB, type IDBPDatabase, type IDBPTransaction } from 'idb';
 import { ENUM_SEEDS, ENUM_SEED_UPDATED_AT, STORES } from './types';
-import { V3_DEFAULTS, backfillV3 } from './backfill';
+import { V3_DEFAULTS, V4_DEFAULTS, backfillV3, backfillV4 } from './backfill';
 
 export const DB_NAME = 'planee';
 
@@ -103,6 +103,23 @@ const MIGRATIONS: Migration[] = [
       let cursor = await tx.objectStore(store).openCursor();
       while (cursor) {
         const upgraded = backfillV3(store, cursor.value as Record<string, unknown>);
+        if (upgraded) await cursor.update(upgraded);
+        cursor = await cursor.continue();
+      }
+    }
+  },
+  // v4 — preferences.recent_issues_count (how many recent issues Home lists).
+  // Server side: the v3 migration in backend/db.go. No store or index changes,
+  // only a row backfill under the same rules as v3: no restamp, no outbox
+  // entry, tombstones included. Guarded like v3's structural steps: the store
+  // exists on every install that reaches here (v1 or v3 created it), but a
+  // missing store must not abort the whole upgrade.
+  async (db, tx) => {
+    for (const store of Object.keys(V4_DEFAULTS)) {
+      if (!db.objectStoreNames.contains(store)) continue;
+      let cursor = await tx.objectStore(store).openCursor();
+      while (cursor) {
+        const upgraded = backfillV4(store, cursor.value as Record<string, unknown>);
         if (upgraded) await cursor.update(upgraded);
         cursor = await cursor.continue();
       }

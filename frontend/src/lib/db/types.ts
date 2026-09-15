@@ -64,7 +64,11 @@ export interface TaskType extends SyncFields {
 
 export interface Preferences extends SyncFields {
   default_task_type: TaskTypeKey; // FK -> task_type.id
+  recent_issues_count: number; // how many recent issues Home lists
 }
+
+/** Default for Preferences.recent_issues_count (and the DDL default). */
+export const DEFAULT_RECENT_ISSUES_COUNT = 6;
 
 /** Enum row — one of STATUS_TYPE_VALUES; `id` is the value key. */
 export interface StatusType extends SyncFields {

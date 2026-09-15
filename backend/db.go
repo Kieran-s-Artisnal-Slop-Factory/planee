@@ -46,10 +46,12 @@ CREATE TABLE sync_state (
 // To change the schema: edit sql/schema.sql, then APPEND a function here that
 // takes a database from the previous version to the new one. Never edit or
 // reorder a migration that has shipped — a database out there is already past
-// it and will never run it again. db_test.go checks that a migrated v1
-// database ends up with exactly the columns a fresh one has.
+// it and will never run it again. db_test.go checks that migrated v1 and v2
+// databases (testdata/schema_v1.sql, schema_v2.sql) end up with exactly the
+// columns a fresh one has.
 var migrations = []func(*sql.Tx) error{
 	migrateV2, // 1 -> 2
+	migrateV3, // 2 -> 3
 }
 
 // latestSchemaVersion is the user_version a fully up-to-date database carries.
@@ -111,6 +113,21 @@ func migrateV2(tx *sql.Tx) error {
 		if _, err := tx.Exec(stmt); err != nil {
 			return fmt.Errorf("%s: %w", stmt, err)
 		}
+	}
+	return nil
+}
+
+// migrateV3: how many recent issues Home lists, a synced preference.
+//
+// The DEFAULT matches sql/schema.sql, and the IndexedDB v4 migration
+// (frontend/src/lib/db/db.ts, backfillV4) fills the same 6 into existing
+// client rows. No field_updated_at stamp is added on either side: a missing
+// stamp falls back to the row's updated_at everywhere, so the existing row
+// reads identically on the server and every upgraded device.
+func migrateV3(tx *sql.Tx) error {
+	const stmt = `ALTER TABLE preferences ADD COLUMN recent_issues_count INTEGER NOT NULL DEFAULT 6`
+	if _, err := tx.Exec(stmt); err != nil {
+		return fmt.Errorf("%s: %w", stmt, err)
 	}
 	return nil
 }

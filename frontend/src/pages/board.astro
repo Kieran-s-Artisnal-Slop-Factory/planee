@@ -1,8 +1,29 @@
 ---
-import Layout from '../layouts/Layout.astro';
-import BoardApp from '../components/apps/BoardApp.svelte';
+/**
+ * `/board/` moved to Home (D17). This page only forwards, keeping the query
+ * (`?project&version&task`) and hash, so old links and bookmarks still land on
+ * the same board. It stays in the service worker's SHELL so it works offline.
+ */
+import { href } from '../lib/paths';
+
+const home = href('/');
 ---
 
-<Layout title="Board">
-  <BoardApp client:only="svelte" />
-</Layout>
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="robots" content="noindex" />
+    <title>Board moved to Home · planee</title>
+    <script is:inline define:vars={{ home }}>
+      location.replace(home + location.search + location.hash);
+    </script>
+  </head>
+  <body>
+    <p>The board now lives on <a id="home-link" href={home}>Home</a>.</p>
+    <script is:inline define:vars={{ home }}>
+      document.getElementById('home-link').href = home + location.search + location.hash;
+    </script>
+  </body>
+</html>

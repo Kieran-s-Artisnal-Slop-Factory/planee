@@ -236,7 +236,8 @@ const LEGACY: LegacyRows = {
     // Tombstones upgrade too: they still sync and back up.
     { id: 'up-vt2', version: 'up-v1', task: 'up-t2', updated_at: T(5), deleted_at: TOMBSTONED_AT, server_seq: 6 },
   ],
-  // Untouched by the upgrade — here to prove the upgrade leaves it alone.
+  // Untouched by the v3 upgrade; the v4 upgrade (server migration v3) adds
+  // recent_issues_count and must leave the rest, stamps included, alone.
   preferences: [
     {
       id: 'singleton',
@@ -326,12 +327,23 @@ const UPGRADED: LegacyRows = {
     },
   ],
   asset: [],
-  preferences: LEGACY.preferences!,
+  preferences: [
+    {
+      id: 'singleton',
+      default_task_type: 'bug',
+      recent_issues_count: 6,
+      updated_at: T(6),
+      deleted_at: null,
+      server_seq: 7,
+      // No stamp for recent_issues_count on either side: it falls back to updated_at.
+      field_updated_at: { default_task_type: T(6), deleted_at: T(6) },
+    },
+  ],
 };
 
 test.describe('schema upgrade', () => {
   // The server starts on a database the v1 server build left behind and runs
-  // its v2 migration at startup, on real rows.
+  // its v2 and v3 migrations at startup, on real rows.
   test.use({ backendSeedSql: v1ServerSql(LEGACY, { epoch: V1_EPOCH, lastSeq: LEGACY_LAST_SEQ }) });
 
   test('an old device and an old server upgrade independently and converge with no push', async ({
@@ -341,7 +353,7 @@ test.describe('schema upgrade', () => {
   }) => {
     // Device A: a browser profile the v2 client build had been syncing with
     // that server. Build its IndexedDB with the raw API on the app's origin
-    // before any app page runs, so the app's own open is the v2 -> v3 upgrade.
+    // before any app page runs, so the app's own open is the v2 -> v4 upgrade.
     const context = await browser.newContext();
     const deviceA = await makeDevice(context, backend, 'A');
     await deviceA.page.goto(backend.url + '/favicon.svg');
@@ -365,7 +377,7 @@ test.describe('schema upgrade', () => {
     // The upgrade is not an edit: nothing queued, nothing restamped.
     expect(await deviceA.outbox(), 'the upgrade queued rows for push').toEqual([]);
     const shape = await describeDatabase(deviceA.page);
-    expect(shape.version).toBe(3);
+    expect(shape.version).toBe(4);
     expect(shape.stores.asset).toEqual({ keyPath: 'id', indexes: [] });
     expect(shape.stores.version!.indexes).toEqual(['project']);
     expect(shape.stores.task!.indexes).toEqual(['project']);
@@ -378,7 +390,7 @@ test.describe('schema upgrade', () => {
     expect(syncA.pulled).toBe(0);
     expect(await deviceA.cursors()).toMatchObject({ lastPullSeq: LEGACY_LAST_SEQ, serverEpoch: V1_EPOCH });
 
-    // Device B: a fresh v3 install joining afterwards.
+    // Device B: a fresh install at the current schema joining afterwards.
     const syncB = await deviceB.sync();
     expect(syncB.ok, syncB.error).toBe(true);
     expect(syncB.pushed).toBe(0);
@@ -404,6 +416,7 @@ test.describe('schema upgrade', () => {
     assertFieldEverywhere(legs, 'task', 'up-t2', 'priority', 3);
     assertFieldEverywhere(legs, 'version_task', 'up-vt1', 'status', 'todo');
     assertFieldEverywhere(legs, 'version_task', 'up-vt1', 'position', 0);
+    assertFieldEverywhere(legs, 'preferences', 'singleton', 'recent_issues_count', 6);
 
     assertConverged(legs);
     // Syncing an upgraded device changes nothing anywhere on A or the server.

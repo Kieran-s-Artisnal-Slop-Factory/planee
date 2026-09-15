@@ -142,12 +142,17 @@ flowchart TD
    restamping `updated_at` or queueing a push, so rows that existed before the
    upgrade agree on both sides with no sync traffic.
 5. Mirror the change in `frontend/tests/sync/helpers/schema.ts`.
-6. `go test ./...`. `TestMigrateV1MatchesFresh` migrates a v1 database and
-   compares `PRAGMA table_info` and `PRAGMA foreign_key_list` for every table
-   against a fresh one. Columns are compared by name, because `ADD COLUMN`
-   appends while a fresh `CREATE TABLE` lists columns in schema order.
-   `TestMigrateV1BackfillsExistingRows` checks the values existing rows end up
-   with. Extend it when a migration adds or changes columns.
+6. `go test ./...`. `TestMigrateV1MatchesFresh` and `TestMigrateV2MatchesFresh`
+   migrate a v1 database and one a v2 build created
+   ([`testdata/schema_v2.sql`](testdata/schema_v2.sql)), and compare
+   `PRAGMA table_info` and `PRAGMA foreign_key_list` for every table against a
+   fresh one. Columns are compared by name, because `ADD COLUMN` appends while
+   a fresh `CREATE TABLE` lists columns in schema order.
+   `TestMigrateV1BackfillsExistingRows` and `TestMigrateV2BackfillsExistingRows`
+   check the values existing rows end up with. Extend them when a migration
+   adds or changes columns. When a schema ships, freeze it as the next
+   `testdata/schema_vN.sql` (from `git show`) so later migrations are tested
+   from that baseline too.
 
 Enum value changes are migrations too: re-run the `INSERT OR IGNORE` seed (and
 delete dropped values) in a new step.

@@ -1,3 +1,10 @@
+-- FROZEN FIXTURE: schema v2, exactly as backend/sql/schema.sql shipped from
+-- f4448f0 (Checkpoint 2) through 39da0c5 (Checkpoint 4). db_test.go builds a
+-- v2 database from it — the shape a server CREATED by a v2 build has, as
+-- opposed to one migrated there from v1 — to prove the migrations after v2
+-- reach the same columns as a fresh database.
+-- Never edit this file; add a new fixture for a new baseline instead.
+--
 -- planee schema — canonical data model.
 --
 -- This DDL is the single source of truth, and it is the FULL, CURRENT schema:
@@ -143,11 +150,10 @@ CREATE TABLE asset (
 
 -- preferences — single row, concurrent edits: per field
 CREATE TABLE preferences (
-    id                   TEXT PRIMARY KEY,
-    default_task_type    TEXT NOT NULL REFERENCES task_type (id),
-    recent_issues_count  INTEGER NOT NULL DEFAULT 6,  -- how many recent issues Home lists
-    updated_at           TEXT NOT NULL,
-    deleted_at           TEXT,
-    server_seq           INTEGER,
-    field_updated_at     TEXT NOT NULL DEFAULT '{}'  -- JSON object: column -> UTC ISO 8601 (per-field LWW)
+    id                 TEXT PRIMARY KEY,
+    default_task_type  TEXT NOT NULL REFERENCES task_type (id),
+    updated_at         TEXT NOT NULL,
+    deleted_at         TEXT,
+    server_seq         INTEGER,
+    field_updated_at   TEXT NOT NULL DEFAULT '{}'  -- JSON object: column -> UTC ISO 8601 (per-field LWW)
 );

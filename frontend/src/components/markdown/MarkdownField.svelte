@@ -151,16 +151,23 @@
   function onKeydown(event: KeyboardEvent) {
     if (!editing) return;
     const target = event.target instanceof Element ? event.target : null;
-    // The editor's dialogs (diagram, drawing, footnotes) own their keys.
-    if (target?.closest('[role="dialog"]')) return;
+    // The editor's own dialogs (diagram, drawing, footnotes) own their keys.
+    // Only dialogs INSIDE this field count: a dialog the field itself sits in
+    // (the board's card dialog, the FAB's create dialog) must not switch off
+    // Ctrl+S / Escape for it.
+    const dialog = target?.closest('[role="dialog"]');
+    if (dialog && event.currentTarget instanceof Element && event.currentTarget.contains(dialog)) return;
     if ((event.ctrlKey || event.metaKey) && !event.altKey && event.key.toLowerCase() === 's') {
       event.preventDefault();
       void save();
       return;
     }
     if (event.key === 'Escape' && !event.defaultPrevented) {
-      if (dirty() && !confirm('Discard your changes?')) return;
+      // Claimed even when the reader declines to discard: an Escape left
+      // unhandled here reaches the enclosing dialog (the card dialog), which
+      // would close — taking the editor and the text it kept with it.
       event.preventDefault();
+      if (dirty() && !confirm('Discard your changes?')) return;
       cancel();
     }
   }

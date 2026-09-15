@@ -29,7 +29,7 @@ import { SYNCED_STORES } from './types';
 import type { SyncFields } from './types';
 import { resetLocalSyncState } from '../sync';
 import { enqueue } from './outbox';
-import { backfillV3 } from './backfill';
+import { backfillV3, backfillV4 } from './backfill';
 
 export interface ExportEnvelope {
   schemaVersion: number;
@@ -92,6 +92,9 @@ function upgradeRow(schemaVersion: number, store: string, row: SyncFields): Sync
   let out = row;
   if (schemaVersion < 3) {
     out = (backfillV3(store, out as unknown as Record<string, unknown>) as unknown as SyncFields | null) ?? out;
+  }
+  if (schemaVersion < 4) {
+    out = (backfillV4(store, out as unknown as Record<string, unknown>) as unknown as SyncFields | null) ?? out;
   }
   return out;
 }

@@ -1,6 +1,8 @@
 <script lang="ts">
-  import { onMount } from 'svelte';
+  import { onMount, tick } from 'svelte';
   import { all, get, getSingleton, patch, put, softDelete, withSyncFields } from '../../lib/db/repo';
+  import { onChanged } from '../../lib/db/changes';
+  import { recordView } from '../../lib/ui/recent';
   import { DEFAULT_PRIORITY, DEFAULT_STATUS, DEFAULT_TASK_TYPE, PRIORITY_VALUES } from '../../lib/db/types';
   import type {
     Task,
@@ -16,6 +18,7 @@
   import Card from '../Card.svelte';
   import MarkdownField from '../markdown/MarkdownField.svelte';
   import MarkdownCell from '../markdown/MarkdownCell.svelte';
+  import TaskCreateForm from '../forms/TaskCreateForm.svelte';
 
   type TaskValues = Omit<Task, keyof SyncFields>;
 
@@ -27,7 +30,11 @@
   let version_taskRows: VersionTask[] = $state([]);
   let linked_version_task: string[] = $state([]);
   let newLink_version_task = $state('');
-  let editingId: string | null = $state(null); // null = closed, '' = new row
+  /** The "+ New" form (TaskCreateForm) is open. */
+  let creating = $state(false);
+  /** A notice shown above the table (e.g. `?edit=` pointed at a deleted task). */
+  let notice: string | null = $state(null);
+  let editingId: string | null = $state(null); // null = closed, else the task being edited
   let editingOriginal: TaskValues | null = null; // the row as it was when Edit was clicked
   let formError: string | null = $state(null);
   /** preferences.default_task_type, read on mount; the schema default until one is saved. */
@@ -151,17 +158,33 @@
     defaultTaskType = prefs?.default_task_type ?? DEFAULT_TASK_TYPE;
   }
 
-  onMount(async () => {
-    await refresh();
-    loading = false;
+  onMount(() => {
+    // Live: rows created elsewhere (the FAB, another tab, a sync) show up here.
+    // refresh only reads, so it never touches an open edit form's draft.
+    const stop = onChanged(['task', 'project', 'version', 'version_task', 'preferences'], () => void refresh());
+    void (async () => {
+      await refresh();
+      loading = false;
+      // /task/?edit=<id> opens that task's edit form (links.ts taskEditHref).
+      const editId = new URLSearchParams(location.search).get('edit');
+      if (editId) {
+        const row = rows.find((r) => r.id === editId);
+        if (row) {
+          startEdit(row);
+          await tick();
+          formEl?.scrollIntoView({ block: 'start', behavior: 'smooth' });
+          formEl?.querySelector<HTMLInputElement>('input')?.focus({ preventScroll: true });
+        } else {
+          notice = 'That task no longer exists.';
+        }
+      }
+    })();
+    return stop;
   });
 
   function startCreate() {
-    draft = blankDraft();
-    editingOriginal = null;
-    linked_version_task = [];
-    formError = null;
-    editingId = '';
+    editingId = null;
+    creating = true;
   }
 
   function toValues(d: ReturnType<typeof blankDraft>): TaskValues {
@@ -198,23 +221,21 @@
       .filter((r) => r.task === row.id)
       .map((r) => r.version);
     formError = null;
+    creating = false;
     editingId = row.id;
+    recordView('task', row.id);
   }
 
   type MarkdownKey = 'description' | 'subtasks';
 
   /**
-   * Save handler for a markdown field. An existing task: its own Save patches
-   * just that field, straight away (D10). A new task (no id yet): the markdown
-   * is kept in the draft and written with the row.
+   * Save handler for an existing task's markdown field: its own Save patches
+   * just that field, straight away (D10). (New tasks: TaskCreateForm.)
    */
   function markdownSaver(field: MarkdownKey) {
     return async (md: string) => {
       const id = editingId;
-      if (!id) {
-        draft[field] = md;
-        return;
-      }
+      if (!id) return;
       const stored = md === '' ? null : md;
       const saved = await patch<Task>('task', id, { [field]: stored });
       if (!saved) throw new Error('That row was deleted somewhere else — nothing was saved.');
@@ -245,28 +266,23 @@
       formError = 'A task needs a title and a project.';
       return;
     }
-    let savedId: string;
-    if (editingId) {
-      // patch() re-reads the row from the store and changes ONLY the fields
-      // named — and only the fields the user changed are named, so an
-      // untouched field keeps its per-field stamp and a concurrent edit to it
-      // on another device still wins.
-      const changes: Partial<TaskValues> = editingOriginal ? changedFields(editingOriginal, values) : { ...values };
-      // Description and subtasks are not this button's: their MarkdownFields saved them already.
-      delete changes.description;
-      delete changes.subtasks;
-      if (Object.keys(changes).length > 0) {
-        const saved = await patch<Task>('task', editingId, changes);
-        if (!saved) {
-          formError = 'That row was deleted somewhere else — nothing was saved.';
-          await refresh();
-          return;
-        }
+    const savedId = editingId;
+    if (!savedId) return;
+    // patch() re-reads the row from the store and changes ONLY the fields
+    // named — and only the fields the user changed are named, so an
+    // untouched field keeps its per-field stamp and a concurrent edit to it
+    // on another device still wins.
+    const changes: Partial<TaskValues> = editingOriginal ? changedFields(editingOriginal, values) : { ...values };
+    // Description and subtasks are not this button's: their MarkdownFields saved them already.
+    delete changes.description;
+    delete changes.subtasks;
+    if (Object.keys(changes).length > 0) {
+      const saved = await patch<Task>('task', savedId, changes);
+      if (!saved) {
+        formError = 'That row was deleted somewhere else — nothing was saved.';
+        await refresh();
+        return;
       }
-      savedId = editingId;
-    } else {
-      const created = await put('task', withSyncFields<TaskValues>(values));
-      savedId = created.id;
     }
     await syncLinks_version_task(savedId);
     editingId = null;
@@ -285,9 +301,26 @@
   <button class="btn btn-primary" data-testid="task-new" onclick={startCreate}>+ New</button>
 </div>
 
+{#if notice}
+  <p class="banner banner-warning" data-testid="task-notice">{notice}</p>
+{/if}
+
+{#if creating}
+  <Card title="New task">
+    <TaskCreateForm
+      autofocus
+      onCreated={() => {
+        creating = false;
+        void refresh();
+      }}
+      onCancel={() => (creating = false)}
+    />
+  </Card>
+{/if}
+
 {#if editingId !== null}
   {#key editingId}
-  <Card title={editingId ? 'Edit' : 'New task'}>
+  <Card title="Edit">
     <form class="stack" onsubmit={save} bind:this={formEl}>
       <div>
         <label for="f-title">Title</label>
@@ -348,7 +381,7 @@
           placeholder="No description yet."
           minHeight="8rem"
           onSave={markdownSaver('description')}
-          getFresh={editingId ? freshMarkdown('description') : undefined}
+          getFresh={freshMarkdown('description')}
         />
         <MarkdownField
           label="Subtasks"
@@ -357,13 +390,9 @@
           placeholder="No subtasks yet. Write a checklist: - [ ] first step"
           minHeight="6rem"
           onSave={markdownSaver('subtasks')}
-          getFresh={editingId ? freshMarkdown('subtasks') : undefined}
+          getFresh={freshMarkdown('subtasks')}
         />
-        <p class="hint md-note">
-          {editingId
-            ? 'Each is saved on its own with its Save button.'
-            : 'Kept with the new task and stored when you save it.'}
-        </p>
+        <p class="hint md-note">Each is saved on its own with its Save button.</p>
       </div>
       <div>
         <label>Versions</label>

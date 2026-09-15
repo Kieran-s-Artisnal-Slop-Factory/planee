@@ -1,12 +1,15 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { all, get, getSingleton, patch, put, softDelete, withSyncFields } from '../../lib/db/repo';
+  import { onChanged } from '../../lib/db/changes';
+  import { recordView } from '../../lib/ui/recent';
   import { DEFAULT_PRIORITY, DEFAULT_STATUS, DEFAULT_TASK_TYPE } from '../../lib/db/types';
   import type { Version, SyncFields, Preferences, Project, Task, VersionTask } from '../../lib/db/types';
   import { changedFields, projectLabel as labelOfProject, taskLabel as labelOfTask } from '../../lib/crud';
   import Card from '../Card.svelte';
   import MarkdownField from '../markdown/MarkdownField.svelte';
   import MarkdownCell from '../markdown/MarkdownCell.svelte';
+  import VersionCreateForm from '../forms/VersionCreateForm.svelte';
 
   type VersionValues = Omit<Version, keyof SyncFields>;
 
@@ -17,7 +20,9 @@
   let version_taskRows: VersionTask[] = $state([]);
   let linked_version_task: string[] = $state([]);
   let newLink_version_task = $state('');
-  let editingId: string | null = $state(null); // null = closed, '' = new row
+  /** The "+ New" form (VersionCreateForm) is open. */
+  let creating = $state(false);
+  let editingId: string | null = $state(null); // null = closed, else the version being edited
   let editingOriginal: VersionValues | null = null; // the row as it was when Edit was clicked
   let formError: string | null = $state(null);
   let draft = $state(blankDraft());
@@ -26,8 +31,8 @@
   let formEl: HTMLFormElement | null = $state(null);
   /**
    * True while the description's MarkdownField is open in its editor. The
-   * form's own Save is disabled meanwhile, so submitting can neither drop the
-   * unsaved text (a new row) nor close the form over it (an existing row).
+   * form's own Save is disabled meanwhile, so submitting cannot close the
+   * form over the unsaved text.
    * Read from the DOM: the field's Save button exists only while editing.
    */
   let markdownEditing = $state(false);
@@ -125,17 +130,17 @@
     version_taskRows = await all<VersionTask>('version_task');
   }
 
-  onMount(async () => {
-    await refresh();
-    loading = false;
+  onMount(() => {
+    // Live: rows created elsewhere (the FAB, another tab, a sync) show up here.
+    // refresh only reads, so it never touches an open edit form's draft.
+    const stop = onChanged(['version', 'project', 'task', 'version_task'], () => void refresh());
+    void refresh().then(() => (loading = false));
+    return stop;
   });
 
   function startCreate() {
-    draft = blankDraft();
-    editingOriginal = null;
-    linked_version_task = [];
-    formError = null;
-    editingId = '';
+    editingId = null;
+    creating = true;
   }
 
   function toValues(d: ReturnType<typeof blankDraft>): VersionValues {
@@ -166,7 +171,9 @@
       .filter((r) => r.version === row.id)
       .map((r) => r.task);
     formError = null;
+    creating = false;
     editingId = row.id;
+    recordView('version', row.id);
   }
 
   /** An existing row's description: its own Save patches just that field, straight away (D10). */
@@ -200,27 +207,22 @@
       formError = 'A version needs a number and a project.';
       return;
     }
-    let savedId: string;
-    if (editingId) {
-      // patch() re-reads the row from the store and changes ONLY the fields
-      // named — and only the fields the user changed are named, so an
-      // untouched field keeps its per-field stamp and a concurrent edit to it
-      // on another device still wins.
-      const changes: Partial<VersionValues> = editingOriginal ? changedFields(editingOriginal, values) : { ...values };
-      // The description is not this button's: its MarkdownField saved it already.
-      delete changes.description;
-      if (Object.keys(changes).length > 0) {
-        const saved = await patch<Version>('version', editingId, changes);
-        if (!saved) {
-          formError = 'That row was deleted somewhere else — nothing was saved.';
-          await refresh();
-          return;
-        }
+    const savedId = editingId;
+    if (!savedId) return;
+    // patch() re-reads the row from the store and changes ONLY the fields
+    // named — and only the fields the user changed are named, so an
+    // untouched field keeps its per-field stamp and a concurrent edit to it
+    // on another device still wins.
+    const changes: Partial<VersionValues> = editingOriginal ? changedFields(editingOriginal, values) : { ...values };
+    // The description is not this button's: its MarkdownField saved it already.
+    delete changes.description;
+    if (Object.keys(changes).length > 0) {
+      const saved = await patch<Version>('version', savedId, changes);
+      if (!saved) {
+        formError = 'That row was deleted somewhere else — nothing was saved.';
+        await refresh();
+        return;
       }
-      savedId = editingId;
-    } else {
-      const created = await put('version', withSyncFields<VersionValues>(values));
-      savedId = created.id;
     }
     await syncLinks_version_task(savedId);
     editingId = null;
@@ -239,9 +241,22 @@
   <button class="btn btn-primary" data-testid="version-new" onclick={startCreate}>+ New</button>
 </div>
 
+{#if creating}
+  <Card title="New version">
+    <VersionCreateForm
+      autofocus
+      onCreated={() => {
+        creating = false;
+        void refresh();
+      }}
+      onCancel={() => (creating = false)}
+    />
+  </Card>
+{/if}
+
 {#if editingId !== null}
   {#key editingId}
-  <Card title={editingId ? 'Edit' : 'New version'}>
+  <Card title="Edit">
     <form class="stack" onsubmit={save} bind:this={formEl}>
       <div>
         <label for="f-number">Number</label>
@@ -277,18 +292,10 @@
           value={draft.description}
           placeholder="No description yet."
           minHeight="8rem"
-          onSave={editingId
-            ? saveDescription
-            : async (md) => {
-                draft.description = md;
-              }}
-          getFresh={editingId ? freshDescription : undefined}
+          onSave={saveDescription}
+          getFresh={freshDescription}
         />
-        <p class="hint md-note">
-          {editingId
-            ? 'Saved on its own with its Save button.'
-            : 'Kept with the new version and stored when you save it.'}
-        </p>
+        <p class="hint md-note">Saved on its own with its Save button.</p>
       </div>
       <div>
         <label class="check">

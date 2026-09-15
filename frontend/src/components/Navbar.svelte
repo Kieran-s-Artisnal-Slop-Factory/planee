@@ -1,16 +1,20 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { href, isPath } from '../lib/paths';
+  import { openPalette } from '../lib/ui/commands';
 
   let { currentPath = '/' }: { currentPath?: string } = $props();
   let open = $state(false);
 
   let online = $state(true);
+  /** "⌘K" on Apple platforms, "Ctrl K" elsewhere (decided after mount; SSR renders Ctrl). */
+  let mac = $state(false);
 
   onMount(() => {
     // Opportunistic background sync, throttled internally.
     import('../lib/sync').then(({ maybeAutoSync }) => maybeAutoSync());
 
+    mac = /Mac|iPhone|iPad|iPod/i.test(navigator.platform || navigator.userAgent);
     online = navigator.onLine;
     const goOnline = () => (online = true);
     const goOffline = () => (online = false);
@@ -22,14 +26,10 @@
     };
   });
 
+  // Everything else (the overview pages, creating things, recent items) is
+  // one Ctrl/Cmd+K away in the command palette (D20).
   const links = [
     { path: '/', label: 'Home' },
-    { path: '/board/', label: 'Board' },
-    { path: '/project/', label: 'Project' },
-    { path: '/version/', label: 'Version' },
-    { path: '/task/', label: 'Task' },
-    { path: '/version_task/', label: 'Version task' },
-    { path: '/asset/', label: 'Assets' },
     { path: '/preferences/', label: 'Preferences' },
     { path: '/settings/', label: 'Settings' },
   ];
@@ -43,6 +43,22 @@
       offline
     </span>
   {/if}
+
+  <button
+    type="button"
+    class="palette-hint"
+    data-testid="nav-palette"
+    title="Command palette — search, create, go to any page"
+    aria-label="Open command palette"
+    onclick={() => {
+      open = false;
+      openPalette();
+    }}
+  >
+    <span class="search-icon" aria-hidden="true">⌕</span>
+    <span class="hint-label">Search</span>
+    <kbd>{mac ? '⌘K' : 'Ctrl K'}</kbd>
+  </button>
 
   <button
     class="hamburger"
@@ -100,12 +116,40 @@
     padding: 0 var(--space-2);
     font-size: var(--font-size-sm);
     font-weight: 700;
-    margin-right: auto;
   }
 
   nav {
     display: flex;
     gap: var(--space-2);
+  }
+
+  .palette-hint {
+    margin-left: auto;
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-2);
+    padding: var(--space-1) var(--space-2) var(--space-1) var(--space-3);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-full);
+    background: var(--bg-color);
+    color: var(--text-muted-color);
+    font: inherit;
+    font-size: var(--font-size-sm);
+    cursor: pointer;
+  }
+
+  .palette-hint:hover {
+    color: var(--text-color);
+    border-color: var(--color-primary);
+  }
+
+  .palette-hint kbd {
+    font-size: 0.75rem;
+  }
+
+  .search-icon {
+    font-size: 1.1em;
+    line-height: 1;
   }
 
   nav a {
@@ -150,6 +194,15 @@
   @media (max-width: 40rem) {
     .hamburger {
       display: flex;
+    }
+
+    .hint-label,
+    .palette-hint kbd {
+      display: none;
+    }
+
+    .palette-hint {
+      padding: var(--space-1) var(--space-3);
     }
 
     .hamburger[aria-expanded='true'] .bar:nth-child(1) {

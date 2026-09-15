@@ -47,6 +47,8 @@
    *   formFields                  which fields the inline/dialog editor shows
    *   createDefaults              starting values for the composer (board vocabulary)
    *   resolveImage, previewNonce  passed through to MarkdownPreview
+   *   openCardId                  open that card's dialog from outside (a deep link)
+   *   onDialogOpen, onDialogClose the dialog opened (any way) / closed
    * `readonly` disables drag (mouse, touch, keyboard), the composer, editing and
    * delete; the snippets still render and the host decides what they show.
    *
@@ -128,6 +130,9 @@
     createDefaults = undefined,
     resolveImage = undefined,
     previewNonce = 0,
+    openCardId = null,
+    onDialogOpen = undefined,
+    onDialogClose = undefined,
   }: {
     /** Your objects, in your own shape. Never mutated. */
     cards?: CardRecord[];
@@ -218,6 +223,17 @@
     resolveImage?: ((src: string) => string | undefined) | undefined;
     /** Passed through to MarkdownPreview; bump it to re-render descriptions. */
     previewNonce?: number;
+    /**
+     * Open this card's dialog (the id as your data spells it), e.g. from a deep
+     * link. Applied once per value, as soon as the card is on the board: the
+     * reader closing the dialog does not reopen it while the prop still holds
+     * the same id, so clear it in `onDialogClose` to be able to ask again.
+     */
+    openCardId?: string | number | null;
+    /** A card's dialog opened — by a title click or by `openCardId`. */
+    onDialogOpen?: ((card: CardRecord) => void) | undefined;
+    /** The dialog closed (the reader closed it, or its card went away). */
+    onDialogClose?: ((card: CardRecord | undefined) => void) | undefined;
   } = $props();
 
   const model = $derived(normalizeSchema(schema, sampleKeys(cards)));
@@ -934,21 +950,52 @@
   function open(entry: Entry) {
     onCardClick?.(entry.card, entry);
     if (!preview) return;
+    show(entry);
+  }
+
+  function show(entry: Entry) {
     // The card behind the dialog stops editing: two editors on one card would
     // fight over the focus and over which one's Save wins.
     editingId = null;
     composerIn = null;
     openEditing = false;
     openId = entry.id;
+    onDialogOpen?.(entry.card);
   }
 
   function close() {
     const id = openId;
+    const card = id ? (entryById.get(id)?.card ?? lastOpenCard) : undefined;
     openId = null;
     openEditing = false;
     // Back to the title that opened it, which is where the reader was.
-    if (id) void focusCard(id, '.kb-title-btn');
+    if (id) {
+      void focusCard(id, '.kb-title-btn');
+      onDialogClose?.(card);
+    }
   }
+
+  /** The open card as last seen, for `onDialogClose` when the card itself is gone. */
+  let lastOpenCard: CardRecord | undefined;
+  $effect(() => {
+    if (openEntry) lastOpenCard = openEntry.card;
+  });
+
+  /** The `openCardId` value already acted on (see the prop). */
+  let appliedOpenCardId: string | null = null;
+  $effect(() => {
+    const wanted = openCardId === null || openCardId === undefined ? null : String(openCardId);
+    if (wanted === null) {
+      appliedOpenCardId = null;
+      return;
+    }
+    if (wanted === appliedOpenCardId) return;
+    const entry = entryById.get(wanted);
+    // Not on the board (yet): wait for `cards` to bring it.
+    if (!entry || !preview) return;
+    appliedOpenCardId = wanted;
+    if (openId !== wanted) show(entry);
+  });
 </script>
 
 <svelte:window

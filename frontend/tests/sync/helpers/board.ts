@@ -100,10 +100,41 @@ export async function syncAll(...devices: Device[]): Promise<void> {
   }
 }
 
-/** Open the board for a project (and version) and wait until it has rendered it. */
+/** Home's board URL (D17): `/?project=…&version=…[&task=…]`. */
+export function boardPath(projectId: string, versionId?: string | null, taskId?: string | null): string {
+  const params = new URLSearchParams({ project: projectId });
+  if (versionId) params.set('version', versionId);
+  if (taskId) params.set('task', taskId);
+  return '/?' + params.toString();
+}
+
+/** Open the board (Home) for a project and version and wait until it has rendered it. */
 export async function openBoard(device: Device, projectId: string, versionId: string): Promise<void> {
-  await device.goto(`/board/?project=${encodeURIComponent(projectId)}&version=${encodeURIComponent(versionId)}`);
+  await device.goto(boardPath(projectId, versionId));
   await waitForBoard(device.page, projectId, versionId);
+}
+
+/** Wait for the test hook after a navigation the page started itself (a link, a redirect). */
+export async function waitForHook(page: Page): Promise<void> {
+  await page.waitForFunction(() => Boolean((window as never)['__planee']), undefined, { timeout: 15_000 });
+}
+
+/** The current URL's path and query, as `{ path, params }`. */
+export function urlParts(page: Page): { path: string; params: Record<string, string> } {
+  const url = new URL(page.url());
+  return { path: url.pathname, params: Object.fromEntries(url.searchParams) };
+}
+
+/**
+ * Poll until the page shows the board URL for exactly these params. The board
+ * rewrites its URL with replaceState after it loads, so this is polled.
+ * Pass `task` when a card dialog is (or should be) open.
+ */
+export async function expectBoardUrl(
+  page: Page,
+  expected: { project: string; version: string; task?: string }
+): Promise<void> {
+  await expect.poll(() => urlParts(page)).toEqual({ path: '/', params: expected });
 }
 
 export async function waitForBoard(page: Page, projectId: string, versionId: string): Promise<void> {
@@ -196,12 +227,65 @@ export function aboveCard(card: Locator): () => Promise<Point> {
   };
 }
 
+/** The board's card dialog (the complete dialog has no close button; the FAB's is a <dialog>). */
+export const cardDialog = (page: Page): Locator =>
+  page.locator('[role="dialog"]').filter({ has: page.locator('.close') });
+
 /** Open a card's dialog by its title button. */
 export async function openCardDialog(page: Page, linkId: string): Promise<Locator> {
   await cardLocator(page, linkId).locator('.kb-title-btn').click();
-  const dialog = page.locator('[role="dialog"]').filter({ has: page.locator('.close') });
+  const dialog = cardDialog(page);
   await expect(dialog).toBeVisible();
   return dialog;
+}
+
+/**
+ * Open a MarkdownField's editor (its `{testid}-edit` button) and switch to the
+ * Source tab. Resolves with the CodeMirror content element.
+ */
+export async function openSourceEditor(field: Locator, testid: string): Promise<Locator> {
+  await field.getByTestId(testid + '-edit').click();
+  await expect(field.getByTestId(testid + '-save')).toBeEnabled({ timeout: 15_000 });
+  await field.getByRole('button', { name: 'Source', exact: true }).click();
+  const source = field.locator('.cm-content');
+  await expect(source).toBeVisible();
+  return source;
+}
+
+/**
+ * Type `lines` into CodeMirror as a person would, one line per Enter. The
+ * markdown keymap continues list markup on Enter ("- [ ] "), so each new line
+ * first selects whatever the editor put at its start and types over it: the
+ * stored text is then exactly `lines`, whatever the continuation rules are.
+ */
+export async function typeSource(page: Page, source: Locator, lines: string[]): Promise<void> {
+  await source.click();
+  await page.keyboard.press('ControlOrMeta+a');
+  await page.keyboard.press('Delete');
+  for (const [i, line] of lines.entries()) {
+    if (i > 0) {
+      await page.keyboard.press('Enter');
+      await page.keyboard.press('Shift+Home');
+      await page.keyboard.press('Delete');
+    }
+    if (line) await page.keyboard.type(line);
+  }
+}
+
+/**
+ * Re-date a row written through the repo: `updated_at` and every per-field
+ * stamp become `at`, and the outbox entry is re-queued to match. For cases
+ * whose assertions depend on WHEN rows were written (the recent-issues
+ * ranking), so the order is fixed rather than a matter of milliseconds.
+ */
+export async function backdate(device: Device, store: string, id: string, at: string): Promise<void> {
+  const row = await device.get(store, id);
+  expect(row, store + '/' + id + ' to backdate').toBeTruthy();
+  const stamps = Object.fromEntries(
+    Object.keys((row!.field_updated_at as Record<string, string> | undefined) ?? {}).map((field) => [field, at])
+  );
+  await device.call('rawPut', store, { ...row, updated_at: at, field_updated_at: stamps });
+  await device.call('enqueue', store, id, at);
 }
 
 /** A raw row on a device, polled until `predicate` holds. */

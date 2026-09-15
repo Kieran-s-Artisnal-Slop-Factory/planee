@@ -1,6 +1,7 @@
 <script lang="ts">
   /**
-   * The board page: one project, one version at a time (D3, D13).
+   * The board: one project, one version at a time (D3). Home mounts it under
+   * the recent-issues strip (D17); `/board/` only redirects to `/`.
    *
    * Reads go through repo (`lib/board/actions.ts` loadProjectData); every write
    * goes through `lib/board/actions.ts`, which plans with the pure
@@ -15,7 +16,17 @@
    *
    * URL: `?project=<id>&version=<id>`, falling back to the last board opened
    * (localStorage `planee-board-last`), then the first project by name and its
-   * current version.
+   * current version. `&task=<task id>` opens that task's card dialog (D18) once
+   * the data is loaded: in the selected version when it is scheduled there,
+   * else in the version links.pickTaskVersion picks (switching project and
+   * version to it), else (unscheduled) the page moves to `/task/?edit=`.
+   * An open dialog keeps `task` in the URL; closing it removes it.
+   * `openTarget({ project, version, task })` does the same in place (Home's
+   * recent issues).
+   *
+   * Views (D16, per device): opening a card dialog records the task; a
+   * project/version becoming the shown selection records it (once per change,
+   * not per re-read).
    *
    * Test hooks (data-testid): board-root (data-project, data-version,
    * data-readonly), board-project-select, board-version-current,
@@ -27,17 +38,16 @@
    * version-description, task-description, task-subtasks, card-type,
    * card-resolution, card-subtasks, card-type-select, card-resolution-select,
    * card-bump, unscheduled, unscheduled-task, unscheduled-add, sync-pill,
-   * sync-now, board-error. KanbanBoard's own hooks are data attributes — see
+   * sync-now, board-error, board-empty, board-new-project. KanbanBoard's own hooks are data attributes — see
    * the Phase 9 report / KanbanBoard.svelte.
    */
   import { onMount } from 'svelte';
   import KanbanBoard from '../kanban/KanbanBoard.svelte';
   import MarkdownField from '../markdown/MarkdownField.svelte';
-  import { get } from '../../lib/db/repo';
+  import { all, byIndex, get } from '../../lib/db/repo';
   import { onChanged } from '../../lib/db/changes';
   import { TASK_TYPE_VALUES, isDoneStatus } from '../../lib/db/types';
-  import type { Project, StatusTypeKey, Task, TaskTypeKey, Version } from '../../lib/db/types';
-  import { href } from '../../lib/paths';
+  import type { Project, StatusTypeKey, Task, TaskTypeKey, Version, VersionTask } from '../../lib/db/types';
   import { projectLabel } from '../../lib/crud';
   import {
     SYNC_EVENT,
@@ -62,8 +72,12 @@
   import type { ProjectData } from '../../lib/board/actions';
   import { currentVersion, latestVersion, sortVersions, suggestNextNumber } from '../../lib/versions';
   import type { CardRecord } from '../../lib/kanban/types';
+  import { BOARD_LAST_KEY, pickTaskVersion, taskEditHref, type BoardTarget } from '../../lib/ui/links';
+  import { recordView } from '../../lib/ui/recent';
+  import { openCreate } from '../../lib/ui/commands';
+  import { TASK_TYPE_TONES } from '../../lib/ui/recentIssues';
 
-  const LAST_KEY = 'planee-board-last';
+  const LAST_KEY = BOARD_LAST_KEY;
   const WATCHED = ['project', 'version', 'task', 'version_task', 'asset', 'preferences'];
   const schema = boardSchema();
   const formFields = ['title', 'status', 'priority'] as const;
@@ -84,6 +98,13 @@
   let completing = $state<{ todo: number; inProgress: number; target: string; exists: boolean } | null>(null);
   let completeNumber = $state('');
   let completeBusy = $state(false);
+
+  /** A task to open once the data is in (`?task=` / openTarget). */
+  let pendingTask: string | null = null;
+  /** How many project/version switches the pending task has caused; stops a loop. */
+  let pendingHops = 0;
+  /** The card (version_task id) whose dialog the board should open. */
+  let openCardId = $state<string | null>(null);
 
   let sync = $state<SyncStatus>({ lastSyncAt: null, lastError: null, pending: 0 });
   let syncMode = $state<SyncMode>('sync');
@@ -132,6 +153,9 @@
     }
     loading = false;
     remember();
+    // A pending task may still move the board elsewhere: record what it settles on.
+    if (pendingTask) await resolvePendingTask(seq);
+    else recordSelection();
   }
 
   let reloadTimer: ReturnType<typeof setTimeout> | undefined;
@@ -159,8 +183,113 @@
     }
   }
 
+  /** Set or remove `task` in the URL without touching the rest of it. */
+  function setTaskParam(taskId: string | null) {
+    try {
+      const url = new URL(location.href);
+      if (taskId) url.searchParams.set('task', taskId);
+      else url.searchParams.delete('task');
+      if (url.href !== location.href) history.replaceState(history.state, '', url);
+    } catch {
+      // No history API: the dialog still works.
+    }
+  }
+
+  let recordedProject = '';
+  let recordedVersion = '';
+
+  /** Record the shown project/version as viewed, once per change. */
+  function recordSelection() {
+    if (projectId && projectId !== recordedProject && data?.project.id === projectId) {
+      recordedProject = projectId;
+      recordView('project', projectId);
+    }
+    if (versionId && versionId !== recordedVersion && data?.versions.some((v) => v.id === versionId)) {
+      recordedVersion = versionId;
+      recordView('version', versionId);
+    }
+  }
+
+  /**
+   * Open the pending task's card: in the selected version if it is there, else
+   * switch to the version its card opens in, else (unscheduled) go to its editor.
+   */
+  async function resolvePendingTask(seq: number) {
+    const taskId = pendingTask;
+    if (!taskId || !data) return;
+    const here = data.links.find((l) => l.task === taskId && l.version === versionId);
+    if (here && data.tasks.some((t) => t.id === taskId)) {
+      pendingTask = null;
+      pendingHops = 0;
+      openCardId = here.id;
+      recordSelection();
+      return;
+    }
+    const [task, links, allVersions] = await Promise.all([
+      get<Task>('task', taskId),
+      byIndex<VersionTask>('version_task', 'task', taskId),
+      all<Version>('version'),
+    ]);
+    if (seq !== loadSeq || pendingTask !== taskId) return;
+    const giveUp = () => {
+      pendingTask = null;
+      pendingHops = 0;
+      setTaskParam(null);
+      recordSelection();
+    };
+    if (!task) return giveUp();
+    const picked = pickTaskVersion(taskId, links, allVersions);
+    if (!picked) {
+      pendingTask = null;
+      location.replace(taskEditHref(taskId));
+      return;
+    }
+    const pickedProject = allVersions.find((v) => v.id === picked.id)?.project ?? task.project;
+    if ((pickedProject === projectId && picked.id === versionId) || pendingHops >= 2) return giveUp();
+    pendingHops += 1;
+    if (pickedProject !== projectId) {
+      projectId = pickedProject;
+      newVersionOpen = false;
+      showCompleted = false;
+    }
+    versionId = picked.id;
+    await reload();
+  }
+
+  /**
+   * Show a project/version/task in place: what navigating to
+   * `boardHref(target)` would show, without reloading the page.
+   */
+  export function openTarget(target: BoardTarget) {
+    openCardId = null;
+    if (target.project && target.project !== projectId) {
+      projectId = target.project;
+      newVersionOpen = false;
+      showCompleted = false;
+    }
+    if (target.version) versionId = target.version;
+    else if (target.project) versionId = '';
+    pendingTask = target.task ?? null;
+    pendingHops = 0;
+    setTaskParam(pendingTask);
+    void reload();
+  }
+
+  function dialogOpened(record: CardRecord) {
+    const card = record as BoardCard;
+    if (!card.taskId) return;
+    recordView('task', card.taskId);
+    setTaskParam(card.taskId);
+  }
+
+  function dialogClosed() {
+    openCardId = null;
+    setTaskParam(null);
+  }
+
   function initialSelection() {
     const params = new URLSearchParams(location.search);
+    pendingTask = params.get('task') || null;
     const project = params.get('project');
     if (project) {
       projectId = project;
@@ -216,6 +345,7 @@
 
   function selectProject(id: string) {
     if (id === projectId) return;
+    dropDialog();
     projectId = id;
     versionId = '';
     newVersionOpen = false;
@@ -224,9 +354,19 @@
   }
 
   function selectVersion(id: string) {
+    if (id !== versionId) dropDialog();
     versionId = id;
     newVersionOpen = false;
     remember();
+    recordSelection();
+  }
+
+  /** Switching the board away takes an open or pending card dialog with it. */
+  function dropDialog() {
+    pendingTask = null;
+    pendingHops = 0;
+    openCardId = null;
+    setTaskParam(null);
   }
 
   /** Run a write, showing its failure rather than dropping it. */
@@ -347,12 +487,7 @@
   }
 
   const typeLabel = (key: string) => TASK_TYPE_VALUES.find((t) => t.key === key)?.label ?? key;
-  const TYPE_TONES: Record<string, string> = {
-    bug: 'danger',
-    feature: 'primary',
-    exploration: 'info',
-    cleanup: 'muted',
-  };
+  const TYPE_TONES = TASK_TYPE_TONES;
 
   // ── Sync ───────────────────────────────────────────────────────────────────
 
@@ -529,9 +664,15 @@
   {#if loading}
     <p class="muted">Loading…</p>
   {:else if projects.length === 0}
-    <div class="empty">
-      <p>No projects yet.</p>
-      <a class="btn btn-primary" href={href('/')}>Create a project on Home</a>
+    <div class="empty" data-testid="board-empty">
+      <p><strong>No projects yet.</strong></p>
+      <p class="muted">
+        Start one with the <span class="plus" aria-hidden="true">+</span> button in the corner. A new project
+        opens its board at version {actions.FIRST_VERSION_NUMBER}.
+      </p>
+      <button type="button" class="btn btn-primary" data-testid="board-new-project" onclick={() => openCreate('project')}>
+        New project
+      </button>
     </div>
   {:else if data && versions.length === 0}
     <div class="empty">
@@ -697,6 +838,9 @@
           {dialogBody}
           {dialogActions}
           previewNonce={assetNonce}
+          {openCardId}
+          onDialogOpen={dialogOpened}
+          onDialogClose={dialogClosed}
           columnHeight="auto"
           descriptionLines={3}
           empty="No cards."
@@ -882,6 +1026,18 @@
 
   .empty p {
     margin: 0;
+  }
+
+  .plus {
+    display: inline-grid;
+    place-items: center;
+    width: 1.4em;
+    height: 1.4em;
+    border-radius: var(--radius-full);
+    background: var(--color-primary);
+    color: var(--surface-color);
+    font-weight: 800;
+    line-height: 1;
   }
 
   .versions {

@@ -123,6 +123,7 @@ export const TABLES: TableMeta[] = [
     enum: false,
     columns: [
     { name: 'default_task_type', type: 'text', nullable: false, references: 'task_type' },
+    { name: 'recent_issues_count', type: 'integer', nullable: false, references: null },
     ],
   },
 ];

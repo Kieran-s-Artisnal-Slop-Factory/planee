@@ -53,3 +53,35 @@ export const V3_DEFAULTS: Record<string, Record<string, unknown>> = {
   task: { title: '', task_type: 'feature', field_updated_at: {} },
   version_task: { status: 'todo', position: 0, field_updated_at: {} },
 };
+
+/**
+ * Schema v4 (server migration v3 in backend/db.go): preferences gains
+ * recent_issues_count, DEFAULT 6.
+ *
+ * Same contract as backfillV3: absent fields only, updated_at untouched, and
+ * no field_updated_at stamp added — the server's ALTER TABLE adds none either,
+ * and a missing stamp falls back to the row's updated_at on both sides.
+ * The 6 is spelled out rather than read from DEFAULT_RECENT_ISSUES_COUNT so
+ * this step stays what it was when it shipped.
+ */
+export function backfillV4(
+  store: string,
+  row: Record<string, unknown>
+): Record<string, unknown> | null {
+  const defaults = V4_DEFAULTS[store];
+  if (!defaults) return null;
+  const next: Record<string, unknown> = { ...row };
+  let changed = false;
+  for (const [field, value] of Object.entries(defaults)) {
+    if (!(field in next)) {
+      next[field] = value;
+      changed = true;
+    }
+  }
+  return changed ? next : null;
+}
+
+/** The stores backfillV4 touches, and what it fills in. */
+export const V4_DEFAULTS: Record<string, Record<string, unknown>> = {
+  preferences: { recent_issues_count: 6 },
+};

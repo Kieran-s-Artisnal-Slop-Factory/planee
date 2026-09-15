@@ -1,18 +1,23 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { all, get, patch, put, softDelete, withSyncFields } from '../../lib/db/repo';
+  import { all, get, patch, softDelete } from '../../lib/db/repo';
+  import { onChanged } from '../../lib/db/changes';
+  import { recordView } from '../../lib/ui/recent';
   import type { Project, SyncFields } from '../../lib/db/types';
   import { changedFields } from '../../lib/crud';
   import Card from '../Card.svelte';
   import MarkdownField from '../markdown/MarkdownField.svelte';
   import MarkdownCell from '../markdown/MarkdownCell.svelte';
+  import ProjectCreateForm from '../forms/ProjectCreateForm.svelte';
 
   type ProjectValues = Omit<Project, keyof SyncFields>;
 
   let loading = $state(true);
   let rows: Project[] = $state([]);
 
-  let editingId: string | null = $state(null); // null = closed, '' = new row
+  /** The "+ New" form (ProjectCreateForm) is open. */
+  let creating = $state(false);
+  let editingId: string | null = $state(null); // null = closed, else the project being edited
   let editingOriginal: ProjectValues | null = null; // the row as it was when Edit was clicked
   let formError: string | null = $state(null);
   let draft = $state(blankDraft());
@@ -20,8 +25,8 @@
   let formEl: HTMLFormElement | null = $state(null);
   /**
    * True while the description's MarkdownField is open in its editor. The
-   * form's own Save is disabled meanwhile, so submitting can neither drop the
-   * unsaved text (a new row) nor close the form over it (an existing row).
+   * form's own Save is disabled meanwhile, so submitting cannot close the
+   * form over the unsaved text.
    * Read from the DOM: the field's Save button exists only while editing.
    */
   let markdownEditing = $state(false);
@@ -49,16 +54,16 @@
     rows = await all<Project>('project');
   }
 
-  onMount(async () => {
-    await refresh();
-    loading = false;
+  onMount(() => {
+    // Live: rows created elsewhere (the FAB, another tab, a sync) show up. Read-only.
+    const stop = onChanged(['project'], () => void refresh());
+    void refresh().then(() => (loading = false));
+    return stop;
   });
 
   function startCreate() {
-    draft = blankDraft();
-    editingOriginal = null;
-    formError = null;
-    editingId = '';
+    editingId = null;
+    creating = true;
   }
 
   function startEdit(row: Project) {
@@ -68,7 +73,9 @@
     };
     editingOriginal = { ...draft };
     formError = null;
+    creating = false;
     editingId = row.id;
+    recordView('project', row.id);
   }
 
   /** An existing row's description: its own Save patches just that field, straight away (D10). */
@@ -104,24 +111,22 @@
       formError = 'A project needs a name.';
       return;
     }
-    if (editingId) {
-      // patch() re-reads the row from the store and changes ONLY the fields
-      // named — and only the ones the user actually changed are named, so an
-      // untouched field keeps its per-field stamp and a concurrent edit to it
-      // on another device still wins.
-      const changes: Partial<ProjectValues> = editingOriginal ? changedFields(editingOriginal, values) : { ...values };
-      // The description is not this button's: its MarkdownField saved it already.
-      delete changes.description;
-      if (Object.keys(changes).length > 0) {
-        const saved = await patch<Project>('project', editingId, changes);
-        if (!saved) {
-          formError = 'That row was deleted somewhere else — nothing was saved.';
-          await refresh();
-          return;
-        }
+    const id = editingId;
+    if (!id) return;
+    // patch() re-reads the row from the store and changes ONLY the fields
+    // named — and only the ones the user actually changed are named, so an
+    // untouched field keeps its per-field stamp and a concurrent edit to it
+    // on another device still wins.
+    const changes: Partial<ProjectValues> = editingOriginal ? changedFields(editingOriginal, values) : { ...values };
+    // The description is not this button's: its MarkdownField saved it already.
+    delete changes.description;
+    if (Object.keys(changes).length > 0) {
+      const saved = await patch<Project>('project', id, changes);
+      if (!saved) {
+        formError = 'That row was deleted somewhere else — nothing was saved.';
+        await refresh();
+        return;
       }
-    } else {
-      await put('project', withSyncFields<ProjectValues>(values));
     }
 
     editingId = null;
@@ -140,9 +145,22 @@
   <button class="btn btn-primary" data-testid="project-new" onclick={startCreate}>+ New</button>
 </div>
 
+{#if creating}
+  <Card title="New project">
+    <ProjectCreateForm
+      autofocus
+      onCreated={() => {
+        creating = false;
+        void refresh();
+      }}
+      onCancel={() => (creating = false)}
+    />
+  </Card>
+{/if}
+
 {#if editingId !== null}
   {#key editingId}
-  <Card title={editingId ? 'Edit' : 'New project'}>
+  <Card title="Edit">
     <form class="stack" onsubmit={save} bind:this={formEl}>
       <div>
         <label for="f-name">Name</label>
@@ -155,18 +173,10 @@
           value={draft.description}
           placeholder="No description yet."
           minHeight="8rem"
-          onSave={editingId
-            ? saveDescription
-            : async (md) => {
-                draft.description = md;
-              }}
-          getFresh={editingId ? freshDescription : undefined}
+          onSave={saveDescription}
+          getFresh={freshDescription}
         />
-        <p class="hint md-note">
-          {editingId
-            ? 'Saved on its own with its Save button.'
-            : 'Kept with the new project and stored when you save it.'}
-        </p>
+        <p class="hint md-note">Saved on its own with its Save button.</p>
       </div>
 
       {#if formError}

@@ -6,12 +6,15 @@ import {
   assertChangedFieldsEverywhere,
   assertInvariantsEverywhere,
   assertIsolatedEverywhere,
+  expectBoardUrl,
   expectSettledCard,
   openBoard,
   openCardDialog,
+  openSourceEditor,
   pollRow,
   seedProject,
   syncAll,
+  typeSource,
 } from './helpers/board';
 
 /**
@@ -38,33 +41,10 @@ async function seedCard(a: Device, b: Device, description: string | null): Promi
 /** Open the card dialog and the description editor, switched to its Source tab. */
 async function editDescriptionSource(page: Page): Promise<{ dialog: Locator; source: Locator }> {
   const dialog = await openCardDialog(page, LINK);
-  const field = dialog.getByTestId('task-description');
-  await field.getByTestId('task-description-edit').click();
-  await expect(field.getByTestId('task-description-save')).toBeEnabled({ timeout: 15_000 });
-  await field.getByRole('button', { name: 'Source', exact: true }).click();
-  const source = field.locator('.cm-content');
-  await expect(source).toBeVisible();
+  const source = await openSourceEditor(dialog.getByTestId('task-description'), 'task-description');
+  // The dialog is a deep link now (D18): its task is in Home's URL.
+  await expectBoardUrl(page, { project: PROJECT, version: VERSION, task: TASK });
   return { dialog, source };
-}
-
-/**
- * Type `lines` into CodeMirror as a person would, one line per Enter. The
- * markdown keymap continues list markup on Enter ("- [ ] "), so each new line
- * first selects whatever the editor put at its start and types over it: the
- * stored text is then exactly `lines`, whatever the continuation rules are.
- */
-async function typeSource(page: Page, source: Locator, lines: string[]): Promise<void> {
-  await source.click();
-  await page.keyboard.press('ControlOrMeta+a');
-  await page.keyboard.press('Delete');
-  for (const [i, line] of lines.entries()) {
-    if (i > 0) {
-      await page.keyboard.press('Enter');
-      await page.keyboard.press('Shift+Home');
-      await page.keyboard.press('Delete');
-    }
-    if (line) await page.keyboard.type(line);
-  }
 }
 
 /** The rendered description preview in a dialog, once it has finished drawing. */

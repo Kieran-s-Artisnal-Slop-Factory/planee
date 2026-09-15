@@ -31,6 +31,8 @@ unchecked item.** Tick boxes as you go and commit this file with the work.
 - [x] Phase 9 — Board page, version completion, markdown fields everywhere (frontend ⇄ backend persistence)
 - [x] Phase 10 — Board and markdown tests: two-device sync and real UI
 - [x] **Checkpoint 4** → commit, then **stop**
+- [x] Phase 10b — Navigation & Home redesign: Home is the board, recent issues, FAB, command palette, slim menu *(requested 2026-09-14)*
+- [x] **Checkpoint 4b** → commit, then **stop**
 - [ ] Phase 11 — Documentation (dev + user), CHANGELOG review, TODO close-out *(later)*
 - [ ] **Checkpoint 5 (final)** *(later)*
 
@@ -201,6 +203,11 @@ Model: **project → versions → tasks of various types.**
 | D13 | Home lists projects (name, current version, open count) and links to `/board/?project=…`. The board opens on the current version, with a completed-versions switcher. |
 | D14 | Excalidraw fonts: self-host **Excalifont, Nunito and Cascadia** (woff2) and set `EXCALIDRAW_ASSET_PATH`. |
 | D15 | Priority: **1 Urgent, 2 High, 3 Medium, 4 Low**, with **4 as the default**. |
+| D16 | "Recently viewed" is tracked **per device** in localStorage (`lib/ui/recent.ts`). Added/updated come from synced rows. The count shown on Home is a synced preference, `preferences.recent_issues_count` (default 6). |
+| D17 | **Home is the board.** `/` shows the recent-issues strip plus the board (project and version switcher, columns). `/board/` redirects to `/`, keeping its query. The Tables section and Home's project creation are removed. |
+| D18 | Opening a task from recent issues or the palette opens its **card dialog on the board** (`/?project&version&task`), in its oldest incomplete version, else its newest completed one. Unscheduled tasks open `/task/?edit=<id>` (`lib/ui/links.ts`). |
+| D19 | A **FAB** on every page offers New Task / New Version / New Project, using the create forms extracted from `/task`, `/version` and `/project`. New Task and New Version **prefill from the board context** (current project and version). |
+| D20 | **Ctrl/Cmd+K command palette**: the create actions, recent and matching tasks/projects/versions, and the overview pages (Project, Version, Task, Version task, Assets, Preferences, Settings). The navbar keeps only **Home, Preferences and Settings**. |
 
 ---
 
@@ -561,6 +568,34 @@ flowchart LR
 ### ✅ Checkpoint 4
 
 Full suite, plus a manual sanity pass if possible. Commit "Kanban board with persistent sync, versions and markdown fields". **Stop here.**
+
+---
+
+## Phase 10b — Navigation & Home redesign
+
+Shared contracts written first by the main agent: `lib/ui/recent.ts`,
+`lib/ui/links.ts`, `lib/ui/commands.ts` (all unit-tested), and
+`Preferences.recent_issues_count` on the type.
+
+```mermaid
+flowchart LR
+  FAB[Fab.svelte] -- listens --> EV((planee-open-create))
+  PAL[CommandPalette.svelte] -- openCreate --> EV
+  PAL -- resolveTaskHref / projectHref / versionHref --> LINKS[lib/ui/links.ts]
+  HOME[HomeApp = board + recent issues] -- recordView --> REC[lib/ui/recent.ts]
+  HOME -- ?task= opens card dialog --> KB[KanbanBoard openCardId]
+  PAL -- recentViews --> REC
+  FAB -- currentBoardContext --> LINKS
+```
+
+- [x] 10b-A Schema lockstep: `preferences.recent_issues_count INTEGER NOT NULL DEFAULT 6` (backend migration v3, sync.go, db.ts v4 + backfill, harness schema); PreferencesApp input.
+- [x] 10b-B Forms, FAB, palette and navbar: extract `ProjectCreateForm`, `VersionCreateForm` and `TaskCreateForm` (pages reuse them); `Fab.svelte` and `CommandPalette.svelte` mounted in Layout; navbar reduced to Home, Preferences, Settings; `/task/?edit=`.
+- [x] 10b-C Home: HomeApp becomes the board (BoardApp logic moved or embedded) with the recent-issues strip; `/board/` redirect; `?task=` opens the card dialog (KanbanBoard `openCardId`); views recorded.
+- [x] 10b-D Tests: update the board and markdown UI specs for `/`, plus new FAB, palette, recent-issues and deep-link UI specs.
+
+### ✅ Checkpoint 4b
+
+Full suite, commit, stop.
 
 ---
 

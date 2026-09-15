@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { backfillV3 } from './backfill';
+import { backfillV3, backfillV4 } from './backfill';
 
 const sync = {
   updated_at: '2026-01-01T00:00:00.000Z',
@@ -74,5 +74,43 @@ describe('backfillV3', () => {
   it('ignores stores it does not upgrade', () => {
     expect(backfillV3('preferences', { id: 'singleton', ...sync })).toBeNull();
     expect(backfillV3('asset', { id: 'x', ...sync })).toBeNull();
+  });
+});
+
+describe('backfillV4', () => {
+  const stamps = { default_task_type: '2026-01-01T00:00:00.000Z', deleted_at: '2026-01-01T00:00:00.000Z' };
+
+  it('fills recent_issues_count with the server DEFAULT, leaving sync fields and stamps alone', () => {
+    const row = { id: 'singleton', default_task_type: 'bug', field_updated_at: stamps, ...sync };
+    expect(backfillV4('preferences', row)).toEqual({
+      id: 'singleton',
+      default_task_type: 'bug',
+      recent_issues_count: 6,
+      field_updated_at: stamps,
+      ...sync,
+    });
+    expect(row).not.toHaveProperty('recent_issues_count');
+  });
+
+  it('upgrades a tombstone too', () => {
+    const row = { id: 'singleton', default_task_type: 'bug', ...sync, deleted_at: '2026-02-01T00:00:00.000Z' };
+    expect(backfillV4('preferences', row)).toMatchObject({ recent_issues_count: 6, deleted_at: row.deleted_at });
+  });
+
+  it('never overwrites a present value, including 0', () => {
+    expect(backfillV4('preferences', { id: 'singleton', recent_issues_count: 0, ...sync })).toBeNull();
+    expect(backfillV4('preferences', { id: 'singleton', recent_issues_count: 20, ...sync })).toBeNull();
+  });
+
+  it('ignores stores it does not upgrade', () => {
+    for (const store of ['project', 'version', 'task', 'version_task', 'asset']) {
+      expect(backfillV4(store, { id: 'x', ...sync })).toBeNull();
+    }
+  });
+
+  it('chains after backfillV3 the way an old backup is imported', () => {
+    const v2 = { id: 'singleton', default_task_type: 'cleanup', field_updated_at: {}, ...sync };
+    const afterV3 = backfillV3('preferences', v2) ?? v2;
+    expect(backfillV4('preferences', afterV3)).toEqual({ ...v2, recent_issues_count: 6 });
   });
 });

@@ -72,6 +72,10 @@ func TestPushPullNewColumnTypesRoundTrip(t *testing.T) {
 			"id": "a1", "name": "x.png", "mime": "image/png", "size": 5242880, "data": "iVBORw0KGgo=",
 			"updated_at": at, "deleted_at": nil,
 		}},
+		"preferences": {{
+			"id": "singleton", "default_task_type": "bug", "recent_issues_count": 0,
+			"updated_at": at, "deleted_at": nil, "field_updated_at": map[string]any{},
+		}},
 	})
 
 	rows := pullRows(t, s)
@@ -89,8 +93,40 @@ func TestPushPullNewColumnTypesRoundTrip(t *testing.T) {
 	check("version_task", "status", "in_progress")
 	check("version_task", "position", json.Number("0.30000000000000004"))
 	check("asset", "size", json.Number("5242880")) // no ".0", no exponent
+	// 0 is a real value here (show no recent issues), not "absent": it must not
+	// fall back to the DDL default of 6.
+	check("preferences", "recent_issues_count", json.Number("0"))
 	if _, ok := rows["asset"][0][fieldTSColumn]; ok {
 		t.Error("asset is whole-row LWW and must not carry field_updated_at")
+	}
+
+	// A per-field edit of recent_issues_count alone keeps default_task_type.
+	const later = "2026-03-02T00:00:00.000Z"
+	push(t, s, map[string][]map[string]any{
+		"preferences": {{
+			"id": "singleton", "recent_issues_count": 12, "updated_at": later,
+			"field_updated_at": map[string]any{"recent_issues_count": later},
+		}},
+	})
+	rows = pullRows(t, s)
+	check("preferences", "recent_issues_count", json.Number("12"))
+	check("preferences", "default_task_type", "bug")
+}
+
+// A new preferences row that omits recent_issues_count gets the DDL default,
+// the same 6 the client assumes when the field is absent.
+func TestPushPreferencesOmittedCountGetsDefault(t *testing.T) {
+	s := testServer(t)
+	const at = "2026-03-01T00:00:00.000Z"
+	push(t, s, map[string][]map[string]any{
+		"preferences": {{
+			"id": "singleton", "default_task_type": "feature",
+			"updated_at": at, "deleted_at": nil, "field_updated_at": map[string]any{},
+		}},
+	})
+	got := pullRows(t, s)["preferences"][0]["recent_issues_count"]
+	if got != json.Number("6") {
+		t.Fatalf("recent_issues_count = %#v, want 6", got)
 	}
 }
 

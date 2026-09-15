@@ -112,20 +112,43 @@ var schemaV1SQL string
 // v1Epoch is the sync identity of the fixture database; migrating must keep it.
 const v1Epoch = "0123456789abcdef0123456789abcdef"
 
-// createV1DB writes a database as the v1 build left it — schema, server
-// bookkeeping, user_version 1 — holding a few real rows, and returns its path.
-func createV1DB(t *testing.T) string {
+// schemaV2SQL is the schema as the v2 build shipped it. Frozen for the same
+// reason: a server CREATED by a v2 build (rather than migrated there from v1)
+// looks like this.
+//
+//go:embed testdata/schema_v2.sql
+var schemaV2SQL string
+
+// v2Epoch is the sync identity of the v2 fixture database.
+const v2Epoch = "fedcba9876543210fedcba9876543210"
+
+// createFixtureDB builds a database file from the given statements and returns
+// its path. The statements must include the schema, serverDDL, sync_state and
+// the PRAGMA user_version the old build left.
+func createFixtureDB(t *testing.T, name string, stmts []string) string {
 	t.Helper()
-	path := filepath.Join(t.TempDir(), "v1.db")
+	path := filepath.Join(t.TempDir(), name+".db")
 	db, err := sql.Open("sqlite", "file:"+path)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer db.Close()
-	stmts := []string{
+	for _, stmt := range stmts {
+		if _, err := db.Exec(stmt); err != nil {
+			t.Fatalf("build %s fixture: %v\n%s", name, err, stmt)
+		}
+	}
+	return path
+}
+
+// createV1DB writes a database as the v1 build left it — schema, server
+// bookkeeping, user_version 1 — holding a few real rows, and returns its path.
+func createV1DB(t *testing.T) string {
+	t.Helper()
+	return createFixtureDB(t, "v1", []string{
 		schemaV1SQL,
 		serverDDL,
-		"INSERT INTO sync_state (id, last_seq, epoch) VALUES (1, 4, '" + v1Epoch + "')",
+		"INSERT INTO sync_state (id, last_seq, epoch) VALUES (1, 5, '" + v1Epoch + "')",
 		`INSERT INTO project (id, description, version, updated_at, deleted_at, server_seq)
 		 VALUES ('p1', 'Planee', '0.1.0', '2026-01-01T00:00:00.000Z', NULL, 1)`,
 		`INSERT INTO version (id, number, project, updated_at, deleted_at, server_seq)
@@ -134,14 +157,31 @@ func createV1DB(t *testing.T) string {
 		 VALUES ('t1', 'p1', 'Write the migration', 2, NULL, '2026-01-01T00:00:02.000Z', NULL, 3)`,
 		`INSERT INTO version_task (id, version, task, updated_at, deleted_at, server_seq)
 		 VALUES ('vt1', 'v1', 't1', '2026-01-01T00:00:03.000Z', '2026-01-02T00:00:00.000Z', 4)`,
+		`INSERT INTO preferences (id, default_task_type, updated_at, deleted_at, server_seq, field_updated_at)
+		 VALUES ('singleton', 'bug', '2026-01-01T00:00:04.000Z', NULL, 5,
+		         '{"default_task_type":"2026-01-01T00:00:04.000Z","deleted_at":"2026-01-01T00:00:04.000Z"}')`,
 		"PRAGMA user_version = 1",
-	}
-	for _, stmt := range stmts {
-		if _, err := db.Exec(stmt); err != nil {
-			t.Fatalf("build v1 fixture: %v\n%s", err, stmt)
-		}
-	}
-	return path
+	})
+}
+
+// createV2DB writes a database as a v2 build CREATED it (schema_v2.sql applied
+// fresh, user_version 2) holding a preferences row and a task, and returns its
+// path.
+func createV2DB(t *testing.T) string {
+	t.Helper()
+	return createFixtureDB(t, "v2", []string{
+		schemaV2SQL,
+		serverDDL,
+		"INSERT INTO sync_state (id, last_seq, epoch) VALUES (1, 3, '" + v2Epoch + "')",
+		`INSERT INTO project (id, name, description, updated_at, deleted_at, server_seq, field_updated_at)
+		 VALUES ('p1', 'Planee', '', '2026-02-01T00:00:00.000Z', NULL, 1, '{}')`,
+		`INSERT INTO task (id, project, title, task_type, description, priority, subtasks, updated_at, deleted_at, server_seq, field_updated_at)
+		 VALUES ('t1', 'p1', 'Add a preference', 'feature', NULL, 4, NULL, '2026-02-01T00:00:01.000Z', NULL, 2, '{}')`,
+		`INSERT INTO preferences (id, default_task_type, updated_at, deleted_at, server_seq, field_updated_at)
+		 VALUES ('singleton', 'cleanup', '2026-02-01T00:00:02.000Z', '2026-02-02T00:00:00.000Z', 3,
+		         '{"default_task_type":"2026-02-01T00:00:02.000Z","deleted_at":"2026-02-02T00:00:00.000Z"}')`,
+		"PRAGMA user_version = 2",
+	})
 }
 
 func userVersion(t *testing.T, db *sql.DB) int {
@@ -250,6 +290,9 @@ func tableNamesOf(t *testing.T, db *sql.DB) []string {
 // "table.column" -> {fresh, migrated}. Each needs its reason at the migration
 // that causes it. Listed exactly — rather than skipping the column — so the
 // test still fails if the difference changes, spreads, or disappears.
+//
+// These are for a database that started at v1. One created fresh by a v2 build
+// never ran migrateV2, so it has none of them (v2KnownDifferences).
 var knownMigrationDifferences = map[string][2]string{
 	// migrateV2: SQLite cannot ALTER a column default. The client always sends
 	// priority, so only an INSERT that omits it would see the old default.
@@ -259,21 +302,35 @@ var knownMigrationDifferences = map[string][2]string{
 	},
 }
 
+// v2KnownDifferences: a database created by a v2 build has none.
+var v2KnownDifferences = map[string][2]string{}
+
 func TestMigrateV1MatchesFresh(t *testing.T) {
+	assertMigratedMatchesFresh(t, createV1DB(t), v1Epoch, knownMigrationDifferences)
+}
+
+func TestMigrateV2MatchesFresh(t *testing.T) {
+	assertMigratedMatchesFresh(t, createV2DB(t), v2Epoch, v2KnownDifferences)
+}
+
+// assertMigratedMatchesFresh opens the old database at path (running every
+// remaining migration) and checks it against a fresh database: same tables,
+// same columns by name, same foreign keys — except exactly `known`.
+func assertMigratedMatchesFresh(t *testing.T, path, wantEpoch string, known map[string][2]string) {
+	t.Helper()
 	fresh, _, _ := openTestDB(t)
 
-	path := createV1DB(t)
 	migrated, epoch, err := openDB(path)
 	if err != nil {
-		t.Fatalf("openDB on a v1 database: %v", err)
+		t.Fatalf("openDB on an old database: %v", err)
 	}
 	defer migrated.Close()
 
 	if got := userVersion(t, migrated); got != latestSchemaVersion() {
 		t.Fatalf("migrated user_version = %d, want %d", got, latestSchemaVersion())
 	}
-	if epoch != v1Epoch {
-		t.Fatalf("epoch changed by migration: %s -> %s", v1Epoch, epoch)
+	if epoch != wantEpoch {
+		t.Fatalf("epoch changed by migration: %s -> %s", wantEpoch, epoch)
 	}
 
 	if f, m := tableNamesOf(t, fresh), tableNamesOf(t, migrated); !reflect.DeepEqual(f, m) {
@@ -300,7 +357,7 @@ func TestMigrateV1MatchesFresh(t *testing.T) {
 			case !inMigrated:
 				t.Errorf("%s is missing from the migrated database (fresh: %s)", key, f)
 			case f != m:
-				if want, ok := knownMigrationDifferences[key]; ok && want == [2]string{f.String(), m.String()} {
+				if want, ok := known[key]; ok && want == [2]string{f.String(), m.String()} {
 					seenKnown[key] = true
 					continue
 				}
@@ -308,7 +365,7 @@ func TestMigrateV1MatchesFresh(t *testing.T) {
 			}
 		}
 	}
-	for key := range knownMigrationDifferences {
+	for key := range known {
 		if !seenKnown[key] {
 			t.Errorf("known difference %s no longer occurs as recorded; update knownMigrationDifferences", key)
 		}
@@ -361,8 +418,17 @@ func TestMigrateV1BackfillsExistingRows(t *testing.T) {
 			"updated_at": "2026-01-01T00:00:03.000Z", "deleted_at": "2026-01-02T00:00:00.000Z",
 			"server_seq": int64(4), "field_updated_at": map[string]any{},
 		},
+		// migrateV3 (IndexedDB v4 backfillV4): recent_issues_count 6, and the
+		// stamp map left exactly as it was.
+		"preferences": {
+			"id": "singleton", "default_task_type": "bug", "recent_issues_count": int64(6),
+			"updated_at": "2026-01-01T00:00:04.000Z", "deleted_at": nil, "server_seq": int64(5),
+			"field_updated_at": map[string]any{
+				"default_task_type": "2026-01-01T00:00:04.000Z", "deleted_at": "2026-01-01T00:00:04.000Z",
+			},
+		},
 	}
-	ids := map[string]string{"project": "p1", "version": "v1", "task": "t1", "version_task": "vt1"}
+	ids := map[string]string{"project": "p1", "version": "v1", "task": "t1", "version_task": "vt1", "preferences": "singleton"}
 	for table, id := range ids {
 		got, err := readRow(db, table, tables[table], id)
 		if err != nil {
@@ -382,46 +448,104 @@ func TestMigrateV1BackfillsExistingRows(t *testing.T) {
 	if err := db.QueryRow("SELECT last_seq FROM sync_state WHERE id = 1").Scan(&lastSeq); err != nil {
 		t.Fatal(err)
 	}
-	if lastSeq != 4 {
-		t.Errorf("last_seq = %d after migration, want 4 (a migration must not touch the sync counter)", lastSeq)
+	if lastSeq != 5 {
+		t.Errorf("last_seq = %d after migration, want 5 (a migration must not touch the sync counter)", lastSeq)
+	}
+}
+
+func TestMigrateV2BackfillsExistingRows(t *testing.T) {
+	path := createV2DB(t)
+	db, _, err := openDB(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	// A tombstoned preferences row upgrades too; its stamps stay as they were.
+	want := map[string]any{
+		"id": "singleton", "default_task_type": "cleanup", "recent_issues_count": int64(6),
+		"updated_at": "2026-02-01T00:00:02.000Z", "deleted_at": "2026-02-02T00:00:00.000Z", "server_seq": int64(3),
+		"field_updated_at": map[string]any{
+			"default_task_type": "2026-02-01T00:00:02.000Z", "deleted_at": "2026-02-02T00:00:00.000Z",
+		},
+	}
+	got, err := readRow(db, "preferences", tables["preferences"], "singleton")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("preferences after migration:\n got:  %#v\n want: %#v", got, want)
+	}
+
+	// Rows in other tables are untouched by migrateV3.
+	task, err := readRow(db, "task", tables["task"], "t1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantTask := map[string]any{
+		"id": "t1", "project": "p1", "title": "Add a preference", "task_type": "feature",
+		"description": nil, "priority": int64(4), "subtasks": nil,
+		"updated_at": "2026-02-01T00:00:01.000Z", "deleted_at": nil, "server_seq": int64(2),
+		"field_updated_at": map[string]any{},
+	}
+	if !reflect.DeepEqual(task, wantTask) {
+		t.Errorf("task after migration:\n got:  %#v\n want: %#v", task, wantTask)
+	}
+
+	var lastSeq int64
+	if err := db.QueryRow("SELECT last_seq FROM sync_state WHERE id = 1").Scan(&lastSeq); err != nil {
+		t.Fatal(err)
+	}
+	if lastSeq != 3 {
+		t.Errorf("last_seq = %d after migration, want 3 (a migration must not touch the sync counter)", lastSeq)
 	}
 }
 
 func TestMigrateReopenIsNoOp(t *testing.T) {
-	path := createV1DB(t)
-	db, epoch, err := openDB(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	before := columnsOf(t, db)
-	rowBefore, err := readRow(db, "task", tables["task"], "t1")
-	if err != nil {
-		t.Fatal(err)
-	}
-	db.Close()
+	for name, create := range map[string]func(*testing.T) string{"v1": createV1DB, "v2": createV2DB} {
+		t.Run(name, func(t *testing.T) {
+			path := create(t)
+			db, epoch, err := openDB(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			before := columnsOf(t, db)
+			rowsBefore := map[string]map[string]any{}
+			for table, id := range map[string]string{"task": "t1", "preferences": "singleton"} {
+				if rowsBefore[table], err = readRow(db, table, tables[table], id); err != nil {
+					t.Fatal(err)
+				}
+			}
+			db.Close()
 
-	// A second start must not re-run anything. migrateV2's DROP COLUMN would
-	// fail outright if it did, so an error here is the loud version of this.
-	db2, epoch2, err := openDB(path)
-	if err != nil {
-		t.Fatalf("reopening a migrated database: %v", err)
-	}
-	defer db2.Close()
-	if epoch2 != epoch {
-		t.Fatalf("epoch changed on reopen: %s -> %s", epoch, epoch2)
-	}
-	if got := userVersion(t, db2); got != latestSchemaVersion() {
-		t.Fatalf("user_version = %d on reopen, want %d", got, latestSchemaVersion())
-	}
-	if after := columnsOf(t, db2); !reflect.DeepEqual(before, after) {
-		t.Fatalf("columns changed on reopen:\n before: %v\n after:  %v", before, after)
-	}
-	rowAfter, err := readRow(db2, "task", tables["task"], "t1")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !reflect.DeepEqual(rowBefore, rowAfter) {
-		t.Fatalf("row changed on reopen:\n before: %#v\n after:  %#v", rowBefore, rowAfter)
+			// A second start must not re-run anything. migrateV2's DROP COLUMN
+			// and migrateV3's ADD COLUMN would fail outright if it did, so an
+			// error here is the loud version of this.
+			db2, epoch2, err := openDB(path)
+			if err != nil {
+				t.Fatalf("reopening a migrated database: %v", err)
+			}
+			defer db2.Close()
+			if epoch2 != epoch {
+				t.Fatalf("epoch changed on reopen: %s -> %s", epoch, epoch2)
+			}
+			if got := userVersion(t, db2); got != latestSchemaVersion() {
+				t.Fatalf("user_version = %d on reopen, want %d", got, latestSchemaVersion())
+			}
+			if after := columnsOf(t, db2); !reflect.DeepEqual(before, after) {
+				t.Fatalf("columns changed on reopen:\n before: %v\n after:  %v", before, after)
+			}
+			for table, rowBefore := range rowsBefore {
+				id, _ := rowBefore["id"].(string)
+				rowAfter, err := readRow(db2, table, tables[table], id)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if !reflect.DeepEqual(rowBefore, rowAfter) {
+					t.Fatalf("%s row changed on reopen:\n before: %#v\n after:  %#v", table, rowBefore, rowAfter)
+				}
+			}
+		})
 	}
 }
 
@@ -471,6 +595,36 @@ func TestFailedMigrationRollsBack(t *testing.T) {
 		t.Fatalf("the failed migration's DROP COLUMN was not rolled back: %v", err)
 	}
 	if _, err := db.Exec("SELECT name FROM project"); err == nil {
+		t.Fatal("the failed migration's ADD COLUMN was not rolled back")
+	}
+}
+
+// The same for a later step: v2 -> v3 failing leaves the database at v2.
+func TestFailedMigrationV3RollsBack(t *testing.T) {
+	path := createV2DB(t)
+	saved := migrations
+	t.Cleanup(func() { migrations = saved })
+	migrations = []func(*sql.Tx) error{migrateV2, func(tx *sql.Tx) error {
+		if err := migrateV3(tx); err != nil {
+			return err
+		}
+		return fmt.Errorf("simulated failure after the DDL ran")
+	}}
+
+	if db, _, err := openDB(path); err == nil {
+		db.Close()
+		t.Fatal("openDB succeeded despite a failing migration")
+	}
+
+	db, err := sql.Open("sqlite", "file:"+path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	if got := userVersion(t, db); got != 2 {
+		t.Fatalf("user_version = %d after a failed migration, want 2", got)
+	}
+	if _, err := db.Exec("SELECT recent_issues_count FROM preferences"); err == nil {
 		t.Fatal("the failed migration's ADD COLUMN was not rolled back")
 	}
 }
