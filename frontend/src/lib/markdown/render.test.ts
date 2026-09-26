@@ -92,22 +92,82 @@ describe('renderMarkdown footnotes', () => {
 });
 
 describe('renderMarkdown math', () => {
-  it('renders $$x^2$$ with KaTeX', async () => {
-    const html = await renderMarkdown('$$x^2$$');
-    expect(html).toContain('class="katex"');
-    expect(html).toContain('<math');
-    expect(html).not.toContain('x^2$$');
-  });
-
-  it('renders a $$ block as display math', async () => {
-    const html = await renderMarkdown('$$\nx^2\n$$\n');
-    expect(html).toContain('class="katex-display"');
-  });
-
-  it('renders inline math', async () => {
+  // The pipeline only marks formulas up; MathLive typesets them in the
+  // browser (lib/math/typeset.ts), so there is no KaTeX markup here at all.
+  it('leaves inline math as a data-math placeholder holding the LaTeX as text', async () => {
     const html = await renderMarkdown('Area is $\\pi r^2$.');
-    expect(html).toContain('class="katex"');
-    expect(html).not.toContain('katex-display');
+    expect(html).toBe(
+      '<p>Area is <span class="math math-inline" data-math="\\pi r^2">\\pi r^2</span>.</p>'
+    );
+    expect(html).not.toContain('katex');
+  });
+
+  it('keeps $$x^2$$ inside a sentence inline', async () => {
+    const html = await renderMarkdown('$$x^2$$');
+    expect(html).toContain('<span class="math math-inline" data-math="x^2">x^2</span>');
+    expect(html).not.toContain('$$');
+  });
+
+  it('turns a $$ block into a display placeholder', async () => {
+    const html = await renderMarkdown('$$\nx^2\n$$\n');
+    expect(html).toBe('<div class="math math-display" data-math="x^2" data-display="">x^2</div>');
+  });
+
+  it('treats a ```math fence as display math, not code', async () => {
+    const html = await renderMarkdown('```math\na + b\n```\n');
+    expect(html).toBe('<div class="math math-display" data-math="a + b" data-display="">a + b</div>');
+    expect(html).not.toContain('astro-code');
+  });
+
+  it('escapes the LaTeX: it is text, never markup', async () => {
+    // A bare `<` is inert inside a quoted attribute; the quote is what must
+    // be escaped there, and `<` in the text.
+    const html = await renderMarkdown('$<img src=x onerror=alert(1)>$ and $a"b$');
+    expect(html).toBe(
+      '<p><span class="math math-inline" data-math="<img src=x onerror=alert(1)>">&#x3C;img src=x onerror=alert(1)></span>' +
+        ' and <span class="math math-inline" data-math="a&#x22;b">a"b</span></p>'
+    );
+  });
+
+  it('passes MathLive attribute commands through as text for the typesetter to filter', async () => {
+    // lib/math/sanitize.ts strips these before MathLive sees them; here they
+    // are just characters in an attribute and a text node.
+    const html = await renderMarkdown('$\\style{position:fixed}{x}$');
+    expect(html).toBe(
+      '<p><span class="math math-inline" data-math="\\style{position:fixed}{x}">\\style{position:fixed}{x}</span></p>'
+    );
+  });
+
+  describe('money is not maths', () => {
+    it('keeps two prices on one line as prose', async () => {
+      const html = await renderMarkdown('It cost $5 and $10.');
+      expect(html).toBe('<p>It cost $5 and $10.</p>');
+    });
+
+    it('keeps a price range as prose', async () => {
+      expect(await renderMarkdown('Between $12 and $15 today')).toBe('<p>Between $12 and $15 today</p>');
+    });
+
+    it('keeps a single price as prose', async () => {
+      expect(await renderMarkdown('costs $7 today')).toBe('<p>costs $7 today</p>');
+    });
+
+    it('renders real maths beside an escaped price', async () => {
+      const html = await renderMarkdown('Pay \\$5 for $x^2$.');
+      expect(html).toBe('<p>Pay $5 for <span class="math math-inline" data-math="x^2">x^2</span>.</p>');
+    });
+
+    it('leaves a lone price and a formula on one line as text (known limit; escape the price)', async () => {
+      // micromark pairs the price's `$` with the formula's opening one, the
+      // strict rule hands that back as text, and the formula has lost its
+      // opener — the same thing the editor canvas does (notey's documented
+      // limit). Nothing is lost: the markdown is untouched.
+      expect(await renderMarkdown('Pay $5 for $x^2$.')).toBe('<p>Pay $5 for $x^2$.</p>');
+    });
+
+    it('does not treat a formula with a space inside the delimiters as maths', async () => {
+      expect(await renderMarkdown('a $ x $ b')).toBe('<p>a $ x $ b</p>');
+    });
   });
 });
 

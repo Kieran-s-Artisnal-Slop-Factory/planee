@@ -16,7 +16,8 @@
     "test:unit:watch": "vitest",
     "test:sync": "playwright test",
     "test:sync:ui": "playwright test --ui",
-    "copy:excalidraw-fonts": "node scripts/copy-excalidraw-fonts.mjs"
+    "copy:excalidraw-fonts": "node scripts/copy-excalidraw-fonts.mjs",
+    "copy:math-assets": "node scripts/build-math-assets.mjs"
   },
   "dependencies": {
     "@astrojs/svelte": "^9.0.1",
@@ -42,6 +43,7 @@
     "@codemirror/state": "^6.7.4",
     "@codemirror/view": "^6.43.11",
     "@excalidraw/excalidraw": "^0.18.1",
+    "@lezer/highlight": "^1.2.4",
     "@milkdown/crepe": "^7.22.1",
     "@milkdown/kit": "^7.22.1",
     "@milkdown/prose": "^7.22.1",
@@ -52,11 +54,10 @@
     "codemirror": "^6.0.2",
     "codemirror-lang-mermaid": "^0.5.0",
     "idb": "^8.0.3",
-    "katex": "^0.18.7",
+    "mathlive": "^0.110.0",
     "mermaid": "^11.17.2",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
-    "rehype-katex": "^7.0.1",
     "rehype-sanitize": "^6.0.0",
     "rehype-stringify": "^10.0.1",
     "remark-gfm": "^4.0.1",
@@ -66,7 +67,8 @@
     "shiki": "^4.4.3",
     "svelte": "^5.57.0",
     "typescript": "^6.0.3",
-    "unified": "^11.0.5"
+    "unified": "^11.0.5",
+    "unist-util-visit": "^5.1.0"
   },
   "devDependencies": {
     "@astrojs/check": "^0.9.10",
@@ -81,6 +83,7 @@
     "@types/react": "^19.3.0",
     "@types/react-dom": "^19.3.0",
     "clsx": "^2.1.1",
+    "happy-dom": "^20.14.5",
     "svelte-check": "^4.7.6",
     "vitest": "^5.0.0"
   },

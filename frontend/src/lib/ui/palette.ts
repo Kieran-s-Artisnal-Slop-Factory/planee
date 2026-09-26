@@ -17,20 +17,40 @@
  * Recently viewed rows get a small boost so, among equal matches, the one you
  * were just looking at comes first. Groups are ordered by their best item, so
  * Enter on the first row is the best match whichever group it is in.
+ *
+ * Editor tools (10c-E, D22): while a markdown editor is open the caller
+ * passes `tools` ("Insert a formula" …), shown as an Editor group — first
+ * when the query is empty, since inserting is what you are most likely
+ * reaching for mid-edit — and ranked by label otherwise. Items may carry
+ * `keys`, the chord that does the same thing (tool keys; the create
+ * actions' keybinds via `actionKeys`), which the palette shows as a hint.
  */
 import type { CreateKind } from './commands';
 import type { RecentKind } from './recent';
 
-export type PaletteKind = 'action' | 'task' | 'project' | 'version' | 'page';
-export type GroupName = 'Actions' | 'Recent' | 'Tasks' | 'Projects' | 'Versions' | 'Pages';
+export type PaletteKind = 'action' | 'tool' | 'task' | 'project' | 'version' | 'page';
+export type GroupName = 'Editor' | 'Actions' | 'Recent' | 'Tasks' | 'Projects' | 'Versions' | 'Pages';
 
 export interface PaletteItem {
   kind: PaletteKind;
-  /** Row id; the CreateKind for actions; the app path for pages. */
+  /** Row id; the CreateKind for actions; the tool id for tools; the app path for pages. */
   id: string;
   label: string;
   /** Secondary text (a task's project, "completed"). */
   hint?: string;
+  /** The key chord that does the same thing, as shown (`Alt+F`, `Alt+N`). */
+  keys?: string;
+  /** A glyph shown instead of the kind's icon (the editor tools'). */
+  icon?: string;
+}
+
+/** An editor tool row, as the caller hands it in (lib/markdown/shortcuts.ts TOOLS). */
+export interface PaletteTool {
+  id: string;
+  label: string;
+  hint?: string;
+  keys?: string;
+  icon?: string;
 }
 
 export interface PaletteGroup {
@@ -68,6 +88,10 @@ export interface PaletteData {
   versions: readonly PaletteVersion[];
   /** Views of every kind; order does not matter (sorted by `at` here). */
   recent: readonly PaletteRecent[];
+  /** Editor tools, when a markdown editor is open to receive them. */
+  tools?: readonly PaletteTool[];
+  /** The chord shown beside each create action. */
+  actionKeys?: Partial<Record<CreateKind, string>>;
 }
 
 export const ACTIONS: readonly { id: CreateKind; label: string }[] = [
@@ -213,11 +237,21 @@ export function buildPalette(
     recentItems.push(item);
   }
 
-  const actions = ACTIONS.map((a): PaletteItem => ({ kind: 'action', id: a.id, label: a.label }));
+  const withKeys = (item: PaletteItem, keys: string | undefined): PaletteItem => (keys ? { ...item, keys } : item);
+  const actions = ACTIONS.map((a): PaletteItem =>
+    withKeys({ kind: 'action', id: a.id, label: a.label }, data.actionKeys?.[a.id])
+  );
+  const tools = (data.tools ?? []).map((t): PaletteItem => {
+    const item: PaletteItem = withKeys({ kind: 'tool', id: t.id, label: t.label }, t.keys);
+    if (t.hint) item.hint = t.hint;
+    if (t.icon) item.icon = t.icon;
+    return item;
+  });
   const pages = PAGES.map((p): PaletteItem => ({ kind: 'page', id: p.id, label: p.label }));
 
   if (normalize(query) === '') {
     const groups: PaletteGroup[] = [
+      { name: 'Editor', items: tools },
       { name: 'Actions', items: actions },
       { name: 'Recent', items: recentItems.slice(0, recentLimit) },
       { name: 'Pages', items: pages },
@@ -239,6 +273,10 @@ export function buildPalette(
   };
 
   const candidates: { name: GroupName; scored: Scored[] }[] = [
+    {
+      name: 'Editor',
+      scored: scoreAll(tools, (t) => scoreText(query, t.label), (t) => t, (_t, i) => i),
+    },
     {
       name: 'Actions',
       scored: scoreAll(actions, (a) => scoreText(query, a.label), (a) => a, (_a, i) => i),

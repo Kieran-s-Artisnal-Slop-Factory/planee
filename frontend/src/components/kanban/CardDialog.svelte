@@ -238,11 +238,17 @@
     background: rgb(0 0 0 / 0.55);
     display: grid;
     place-items: center;
+    /* A bounded row: with the default auto row, the modal's percentage
+       max-height resolves against its own content and never caps it, so a
+       tall description (a drawing, a diagram, an open editor) pushed Save and
+       Close off the bottom of the screen. */
+    grid-template-rows: minmax(0, 1fr);
     z-index: 70;
     padding: var(--space-4);
   }
 
   .modal {
+    min-height: 0;
     background: var(--surface-raised-color);
     border: 1px solid var(--border-color);
     border-radius: var(--radius-lg);

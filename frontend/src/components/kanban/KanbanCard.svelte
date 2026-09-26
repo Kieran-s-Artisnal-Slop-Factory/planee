@@ -11,8 +11,14 @@
    * the toggle only appears when there is something hidden (measured, because
    * asking a paragraph how tall it would be is the only way to know). The
    * title opens the card in full, where nothing is clamped.
+   *
+   * `focusable` (planee's keyboard model, D23) makes the card itself a focus
+   * target (tabindex -1, a visible ring): the board moves focus between cards
+   * and the page's keybinds act on the focused one. Enter on the focused card
+   * opens it in full, like its title. `keybinds` goes on the root as
+   * `data-keybind` for the Ctrl overlay's badges.
    */
-  import type { Snippet } from 'svelte';
+  import { tick, type Snippet } from 'svelte';
   import CardForm from './CardForm.svelte';
   import CardDescription from './CardDescription.svelte';
   import { fieldsOf, type Entry, type PatchFields } from '../../lib/kanban/board';
@@ -56,6 +62,9 @@
     badges = undefined,
     resolveImage = undefined,
     previewNonce = 0,
+    focusable = false,
+    keybinds = undefined,
+    onEnter = undefined,
   }: {
     entry: Entry;
     model: KanbanModel;
@@ -99,7 +108,35 @@
     badges?: Snippet<[card: CardRecord]> | undefined;
     resolveImage?: ((src: string) => string | undefined) | undefined;
     previewNonce?: number;
+    /** The card itself takes focus (tabindex -1) for keyboard navigation. */
+    focusable?: boolean;
+    /** `data-keybind` for the Ctrl overlay (see lib/ui/keybinds.ts). */
+    keybinds?: string | undefined;
+    /** Enter pressed on the focused card itself (not one of its controls). */
+    onEnter?: (() => void) | undefined;
   } = $props();
+
+  let root = $state<HTMLLIElement | undefined>();
+
+  /**
+   * A focusable card keeps the focus a click (or the keys) gave it when it
+   * turns into the inline editor, and Svelte's `autofocus` only takes focus
+   * from <body> — so hand it to the editor's title here.
+   */
+  $effect(() => {
+    if (!editing || !focusable || !root || document.activeElement !== root) return;
+    const card = root;
+    void tick().then(() => {
+      if (document.activeElement === card) card.querySelector<HTMLElement>('input, textarea, select')?.focus();
+    });
+  });
+
+  function onKey(event: KeyboardEvent) {
+    if (event.target !== event.currentTarget || event.key !== 'Enter') return;
+    if (event.ctrlKey || event.altKey || event.shiftKey || event.metaKey || !onEnter) return;
+    event.preventDefault();
+    onEnter();
+  }
 
   const priority = $derived(priorityById(entry.priority, model.priorities));
   const due = $derived(entry.due);
@@ -152,8 +189,12 @@
   }
 </script>
 
+<!-- A focusable card is a focus target for the board's keys: tabindex -1, never in the tab order
+     (spread, because the a11y check cannot see that the dynamic value is never >= 0). -->
+<!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
 <li
   class="kb-card"
+  class:focusable={focusable && !ghost}
   class:dragging
   class:lifted
   class:ghost
@@ -164,8 +205,12 @@
   data-kanban-card={ghost ? undefined : ''}
   data-id={entry.id}
   data-index={index}
+  data-keybind={focusable && !ghost ? keybinds : undefined}
+  {...focusable && !ghost ? { tabindex: -1 } : {}}
+  bind:this={root}
   aria-busy={busy || undefined}
   onpointerdown={grab}
+  onkeydown={focusable && !ghost ? onKey : undefined}
   ondblclick={editable && !editing && !ghost ? () => onEdit?.() : undefined}
 >
   {#if editing}
@@ -323,6 +368,19 @@
 
   .kb-card:hover:not(.editing) {
     border-color: var(--color-primary);
+  }
+
+  /* The keyboard's current card (D23). A mouse click focuses it too, quietly:
+     the border says "keys act here", the ring only shows for the keyboard. */
+  .kb-card.focusable:focus {
+    outline: none;
+    border-color: var(--color-primary);
+  }
+
+  .kb-card.focusable:focus-visible {
+    outline: 2px solid var(--color-primary);
+    outline-offset: 2px;
+    box-shadow: 0 0 0 5px var(--color-primary-soft), var(--shadow-1);
   }
 
   /* The card being dragged stays exactly where it is, dimmed. Nothing reflows

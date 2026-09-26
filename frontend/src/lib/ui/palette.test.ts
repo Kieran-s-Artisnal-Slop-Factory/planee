@@ -158,3 +158,47 @@ describe('buildPalette — with a query', () => {
     expect(buildPalette('zzzzqqq', data())).toEqual([]);
   });
 });
+
+describe('buildPalette — editor tools and key hints (10c-E)', () => {
+  const tools = [
+    { id: 'formula', label: 'Insert a formula', hint: 'maths, written as it looks', keys: 'Alt+F', icon: '∑' },
+    { id: 'diagram', label: 'Insert a diagram', keys: 'Alt+M' },
+    { id: 'drawing', label: 'Insert a drawing', keys: 'Alt+E' },
+    { id: 'footnotes', label: 'Insert a footnote', keys: 'Alt+0' },
+  ];
+
+  it('has no Editor group unless an editor passes its tools', () => {
+    expect(buildPalette('', data()).map((g) => g.name)).not.toContain('Editor');
+    expect(buildPalette('insert', data()).map((g) => g.name)).not.toContain('Editor');
+  });
+
+  it('puts the tools first on an empty query, with their keys', () => {
+    const groups = buildPalette('', data({ tools }));
+    expect(groups.map((g) => g.name)).toEqual(['Editor', 'Actions', 'Pages']);
+    expect(groups[0]!.items[0]).toEqual({
+      kind: 'tool',
+      id: 'formula',
+      label: 'Insert a formula',
+      hint: 'maths, written as it looks',
+      keys: 'Alt+F',
+      icon: '∑',
+    });
+    expect(groups[0]!.items.map((i) => i.keys)).toEqual(['Alt+F', 'Alt+M', 'Alt+E', 'Alt+0']);
+  });
+
+  it('ranks a tool by its label like any other row', () => {
+    const groups = buildPalette('formula', data({ tools }));
+    expect(groups[0]!.name).toBe('Editor');
+    expect(groups[0]!.items.map((i) => i.id)).toEqual(['formula']);
+    expect(buildPalette('insert a d', data({ tools }))[0]!.items.map((i) => i.id)).toEqual(['diagram', 'drawing']);
+  });
+
+  it('shows each create action with its chord when one is given', () => {
+    const groups = buildPalette('', data({ actionKeys: { task: 'Alt+N', project: 'Alt+Shift+P', version: 'Ctrl+Shift+V' } }));
+    expect(groups.find((g) => g.name === 'Actions')!.items).toEqual([
+      { kind: 'action', id: 'task', label: 'New Task', keys: 'Alt+N' },
+      { kind: 'action', id: 'version', label: 'New Version', keys: 'Ctrl+Shift+V' },
+      { kind: 'action', id: 'project', label: 'New Project', keys: 'Alt+Shift+P' },
+    ]);
+  });
+});

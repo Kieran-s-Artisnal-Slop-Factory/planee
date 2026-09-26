@@ -13,8 +13,17 @@
  *    than passed through.
  *  - **rehype-sanitize** runs straight after remark-rehype with GitHub's
  *    schema, extended only for what this pipeline itself produces (see
- *    `SCHEMA`). KaTeX and Shiki run AFTER it: their markup is generated from
- *    already-sanitised text and would otherwise need a far looser schema.
+ *    `SCHEMA`). The math placeholders and Shiki run AFTER it: their markup is
+ *    generated from already-sanitised text and would otherwise need a far
+ *    looser schema.
+ *  - **Math (D21)** is no longer KaTeX. `$…$`, `$$…$$` and ```math fences
+ *    become `span.math.math-inline[data-math]` /
+ *    `div.math.math-display[data-math][data-display]` holding the LaTeX as
+ *    plain TEXT (`rehypeMathPlaceholders`), and MarkdownPreview typesets them
+ *    with MathLive afterwards (lib/math/typeset.ts, which filters both the
+ *    LaTeX and MathLive's markup — lib/math/sanitize.ts). notey's money rule
+ *    runs straight after remark-math (lib/math/remark-strict.ts), so
+ *    `$5 and $10` stays prose here exactly as it does in the editor canvas.
  *  - **Footnotes keep working.** remark-rehype is told not to prefix ids, so
  *    the sanitiser's `user-content-` clobbering happens exactly once, and
  *    `rehypeLinkIds` then points each `#fn-…` link at its prefixed target
@@ -37,8 +46,8 @@ import remarkGfm from 'remark-gfm';
 import remarkMath from 'remark-math';
 import remarkRehype, { defaultHandlers } from 'remark-rehype';
 import rehypeSanitize, { defaultSchema, type Options as SanitizeSchema } from 'rehype-sanitize';
-import rehypeKatex from 'rehype-katex';
 import rehypeStringify from 'rehype-stringify';
+import remarkStrictMath from '../math/remark-strict';
 import type { HighlighterCore, LanguageRegistration, ShikiTransformer } from 'shiki/core';
 import type { Element, ElementContent, Root } from 'hast';
 import type { Code } from 'mdast';
@@ -64,8 +73,9 @@ export interface RenderOptions {
  * pipeline emits before the sanitiser runs:
  *
  *  - `code.math-inline` / `code.math-display` — remark-math's markers, which
- *    rehype-katex (after sanitising) turns into KaTeX markup. `language-math`
- *    is already allowed by the default `language-*` rule.
+ *    `rehypeMathPlaceholders` (after sanitising) turns into the `data-math`
+ *    placeholders MathLive typesets. `language-math` is already allowed by
+ *    the default `language-*` rule.
  *  - `pre.mermaid[data-mermaid-source]` — the diagram placeholder.
  *  - `data:` image srcs (checked to really be images in `rehypeResolveImages`).
  *
@@ -163,6 +173,67 @@ function codeHandler(
   state.patch(node, result);
   return result;
 }
+
+/* ── Math ───────────────────────────────────────────────────────────── */
+
+/** The plain text under a hast node. */
+function textOf(node: Element | ElementContent): string {
+  if (node.type === 'text') return node.value;
+  if (node.type === 'element') return node.children.map(textOf).join('');
+  return '';
+}
+
+const classesOf = (element: Element): string[] =>
+  Array.isArray(element.properties.className) ? element.properties.className.map(String) : [];
+
+/**
+ * remark-math's output → placeholders for the MathLive pass (D21).
+ *
+ *  - `code.math-inline` (`$…$`, and `$$…$$` inside a sentence) →
+ *    `<span class="math math-inline" data-math="…">…</span>`
+ *  - `pre > code.math-display` (a `$$` block) and `pre > code.language-math`
+ *    (a ```math fence) →
+ *    `<div class="math math-display" data-math="…" data-display="">…</div>`
+ *
+ * The LaTeX is the element's TEXT and the attribute value, never markup, so
+ * it is exactly as inert as any other text the sanitiser let through. It
+ * runs before Shiki, which would otherwise highlight a ```math fence as code.
+ */
+const rehypeMathPlaceholders: Plugin<[], Root> = () => (tree) => {
+  const walk = (node: Root | Element): void => {
+    node.children.forEach((child, index) => {
+      if (child.type !== 'element') return;
+      if (child.tagName === 'code' && classesOf(child).includes('math-inline')) {
+        const latex = textOf(child);
+        node.children[index] = {
+          type: 'element',
+          tagName: 'span',
+          properties: { className: ['math', 'math-inline'], dataMath: latex },
+          children: [{ type: 'text', value: latex }],
+        };
+        return;
+      }
+      const code = child.children[0];
+      if (
+        child.tagName === 'pre' &&
+        code?.type === 'element' &&
+        code.tagName === 'code' &&
+        classesOf(code).some((c) => c === 'math-display' || c === 'language-math')
+      ) {
+        const latex = textOf(code).replace(/\n$/, '');
+        node.children[index] = {
+          type: 'element',
+          tagName: 'div',
+          properties: { className: ['math', 'math-display'], dataMath: latex, dataDisplay: '' },
+          children: [{ type: 'text', value: latex }],
+        };
+        return;
+      }
+      walk(child);
+    });
+  };
+  walk(tree);
+};
 
 /* ── Code highlighting ──────────────────────────────────────────────── */
 
@@ -400,9 +471,11 @@ function buildProcessor(): Processor {
   return unified()
     .use(remarkParse)
     .use(remarkGfm)
-    // $inline$ / $$block$$ math → KaTeX HTML. Surfaces that render this
-    // must ship katex's stylesheet (MarkdownPreview imports it).
+    // $inline$ / $$block$$ math → data-math placeholders (see
+    // rehypeMathPlaceholders); MarkdownPreview typesets them with MathLive.
     .use(remarkMath)
+    // Money is not maths: `$5 and $10` goes back to being text.
+    .use(remarkStrictMath)
     .use(remarkRehype, {
       // Ids are prefixed once, by the sanitiser — see rehypeLinkIds.
       clobberPrefix: '',
@@ -410,10 +483,7 @@ function buildProcessor(): Processor {
     })
     .use(rehypeSanitize, SCHEMA)
     .use(rehypeLinkIds)
-    // `trust: false` (the default, stated): no \href, \url, \htmlClass… with
-    // arbitrary targets. `strict: 'ignore'`: don't log warnings for input
-    // KaTeX renders fine anyway (e.g. unicode text in math mode).
-    .use(rehypeKatex, { trust: false, strict: 'ignore' })
+    .use(rehypeMathPlaceholders)
     .use(rehypeHighlight)
     .use(rehypeResolveImages)
     .use(rehypeStringify) as unknown as Processor;

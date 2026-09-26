@@ -48,6 +48,7 @@
     type="button"
     class="palette-hint"
     data-testid="nav-palette"
+    data-keybind="palette.open@bottom"
     title="Command palette — search, create, go to any page"
     aria-label="Open command palette"
     onclick={() => {

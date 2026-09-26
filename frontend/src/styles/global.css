@@ -511,11 +511,29 @@ dialog::backdrop,
   padding-left: var(--space-1);
 }
 
-/* KaTeX ships its own CSS; this is just overflow behaviour. */
-.prose .katex-display {
+/*
+ * Math (D21): MathLive's vendored stylesheets (public/math/, attached by
+ * lib/math/fonts.ts) lay out the glyphs inside a formula and say nothing about
+ * where the formula goes. Display math is its own line; an inline formula
+ * never forces a wrap mid-formula.
+ */
+.prose .math-display {
+  display: block;
+  text-align: center;
   overflow-x: auto;
   overflow-y: hidden;
+  margin: var(--space-3) 0;
   padding: var(--space-1) 0;
+}
+
+.prose .math-inline {
+  white-space: nowrap;
+}
+
+/* A formula MathLive could not typeset: its source, in the danger ink. */
+.prose .math-error {
+  color: var(--color-danger);
+  font-family: var(--font-mono);
 }
 
 /* Mermaid diagrams: the source until mermaid draws it, then the picture. */

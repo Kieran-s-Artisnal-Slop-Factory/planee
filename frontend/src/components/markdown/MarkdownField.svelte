@@ -15,8 +15,11 @@
    *   overwritten. `onSave` is awaited; a failure keeps the editor open with
    *   the message.
    * - **Ctrl/Cmd+S** saves; **Escape** cancels (asking first if there are
-   *   changes). Keys pressed inside one of the editor's own dialogs, or already
-   *   handled by the editor (closing a completion popup), are left alone.
+   *   changes). While one of the editor's own dialogs is open (formula,
+   *   diagram, drawing, footnotes) the keys are the dialog's, and keys already
+   *   handled by the editor (closing a completion popup) are left alone. The
+   *   dialogs mark their Escape handled, so it never reaches the card or
+   *   create dialog around this field either (10c-E).
    *
    * Test hooks: `data-testid` `{testid}`, `{testid}-edit`, `{testid}-save`,
    * `{testid}-cancel`, `{testid}-preview`; the rendered preview carries
@@ -150,13 +153,14 @@
 
   function onKeydown(event: KeyboardEvent) {
     if (!editing) return;
-    const target = event.target instanceof Element ? event.target : null;
-    // The editor's own dialogs (diagram, drawing, footnotes) own their keys.
-    // Only dialogs INSIDE this field count: a dialog the field itself sits in
-    // (the board's card dialog, the FAB's create dialog) must not switch off
+    // The editor's own dialogs (formula, diagram, drawing, footnotes) own the
+    // keyboard while one is open — they are modal, even when focus has not
+    // made it inside yet (a toolbar button keeps it after a click). Only
+    // dialogs INSIDE this field count: a dialog the field itself sits in (the
+    // board's card dialog, the FAB's create dialog) must not switch off
     // Ctrl+S / Escape for it.
-    const dialog = target?.closest('[role="dialog"]');
-    if (dialog && event.currentTarget instanceof Element && event.currentTarget.contains(dialog)) return;
+    // (`data-md-dialog` marks exactly those four.)
+    if (event.currentTarget instanceof Element && event.currentTarget.querySelector('[data-md-dialog]')) return;
     if ((event.ctrlKey || event.metaKey) && !event.altKey && event.key.toLowerCase() === 's') {
       event.preventDefault();
       void save();

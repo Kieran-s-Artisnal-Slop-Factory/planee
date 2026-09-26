@@ -52,6 +52,24 @@ replace `(unreleased)` with the release date and start a new heading above it.
 - **Ctrl/Cmd+K command palette** creates tasks, versions and projects, jumps to recent or matching tasks, projects and versions, and opens the overview pages. It works while typing in editors.
 - The navbar now shows only Home, Preferences and Settings; the overview pages (Project, Version, Task, Version task, Assets) are in the command palette.
 - **Schema change** (server migration v3, IndexedDB v4): `preferences.recent_issues_count`, backfilled to 6 on existing servers, devices and old backups without re-pushing.
+- **Markdown editor replaced by notey's**:
+  - A Formula tool: a visual MathLive editor with a matrix picker and an "on its own line" option.
+  - Formulas in the rich-text canvas are edited in place by double-clicking.
+  - Tool keys: Formula Alt+F, Diagram Alt+M, Draw Alt+E, Footnotes Alt+0. They're shown on the toolbar and can be rebound per device in Settings, but not onto a key the app already uses.
+  - While an editor is open, the command palette offers "Insert a formula / diagram / drawing / footnote".
+- The command palette shows each create action's keybind.
+- **Keyboard shortcuts everywhere**:
+  - Ctrl+Enter opens the + menu.
+  - Ctrl+N (or Alt+N) opens New Task, and Ctrl+Shift+P (or Alt+Shift+P) opens New Project. Browsers keep Ctrl+N (and Firefox keeps Ctrl+Shift+P) in a normal tab; they work when planee is installed as an app.
+  - Ctrl+Shift+V opens New Version, except in a text field, where it still pastes as plain text.
+- **Board shortcuts**:
+  - Ctrl+1/2/3 open New Task set to TODO / In Progress / Done. The form gains a "Starts in" status.
+  - Ctrl+Shift+1/2/3 focus the first card in that column.
+  - Ctrl+4 opens the project picker.
+  - Ctrl+Shift+C starts "Mark complete", and Ctrl+Shift+E edits the version.
+- **Cards can take keyboard focus.** Tab/PageDown and Shift+Tab/PageUp move between cards, continuing into the next column. Ctrl+↑/↓ reorder a card and Ctrl+←/→ move it between columns, going through the same path and sync as a drag. Ctrl+E or Enter opens the card.
+- New **Edit version** dialog and board button: change a version's number (with a warning on duplicates) and its notes.
+- **Hold Ctrl** for about half a second to see key badges on the controls and a cheat sheet for the page. Each item shows the fallback key unless the app is installed.
 
 ## Bug Fixes
 
@@ -66,12 +84,20 @@ replace `(unreleased)` with the release date and start a new heading above it.
 - Pressing Escape inside the drawing canvas no longer closes the dialog and discards the drawing.
 - The service worker no longer freezes page loads for about 30 seconds after it first installs. Activation used to wait for the whole paced offline crawl; the crawl now runs in the background.
 - Onboarding on the GitHub Pages / offline-default build now requires a server URL before choosing "Sync with a server". An empty URL there pointed sync at the static host, so every sync failed.
+- Prices like "$5 and $10" are no longer rendered as maths, in the editor or the preview.
+- Escape in a formula, diagram, footnote or drawing dialog no longer closes the card or create dialog around it.
+- Citing a selected sentence as a footnote keeps the sentence. Toggling or saving footnotes no longer drops the last fraction of a second of typing.
+- A card dialog with a long description, a drawing or an open editor grew past the bottom of the screen, hiding Save and Close. It is now capped at the screen height and its body scrolls.
+- **Security:** formulas can't set styles, ids, links or data attributes on the page. MathLive's `style`, `cssId`, `href`, `htmlData` and friends, and unsafe colour, font and box values, are stripped before typesetting, and the output is filtered again.
 - Ctrl+S and Escape in a markdown field inside the board's card dialog were ignored, because the field treated any enclosing dialog as one of the editor's own sub-dialogs.
 - Preferences saves only the fields you changed, so an edit to another preference on a different device is kept.
 - Pressing Escape in a markdown editor inside the card dialog and answering "No" to "Discard your changes?" no longer closes the dialog and throws away the text you chose to keep.
 
 ## Other
 
+- Math renders with MathLive everywhere (preview, table cells and editor), using fonts shipped with the app in `public/math/` and precached for offline use (`npm run copy:math-assets` refreshes them). KaTeX, `rehype-katex` and the KaTeX font PostCSS step are removed. The offline crawl is now 276 fetches, under its cap of 324.
+- New shared keyboard modules: `lib/ui/keys.ts` (chord parsing, matching and display), `lib/ui/keymap.ts` (every app keybind as data), `lib/ui/keybinds.ts` (one capture-phase dispatcher with scope, typing and modal gating), and `lib/board/keyboard.ts`. Keyboard card moves share a commit path with pointer and grip drops.
+- The sync harness can build into other folders (`PLANEE_DIST_DIR`, `PLANEE_BIN_DIR`), so parallel runs don't collide. New specs: `editor-ui.spec.ts` and `keybinds-ui.spec.ts`, plus a card-dialog height regression test.
 - The Project, Version and Task overview pages share new create-form components (`components/forms/`) with the + button, and refresh live when rows change. Tasks created from a form go to the top of TODO in the versions they're scheduled in.
 - UI tests now use Home (`/`) and the + button and check that `/board/` redirects with its query. A new `navigation-ui.spec.ts` covers the slim navbar, the + button's create dialogs, the command palette (including Ctrl+K inside editors), `?task=` deep links, the recent-issues strip and its synced count, and Ctrl+S/Escape inside the card dialog.
 - KanbanBoard gains `openCardId`, `onDialogOpen` and `onDialogClose`. The board logic moved from `BoardApp` into `components/board/Board.svelte`. New helpers: `lib/ui/{recent,links,commands,palette,recentIssues}.ts`, all unit-tested.

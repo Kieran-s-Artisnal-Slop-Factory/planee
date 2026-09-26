@@ -33,6 +33,8 @@ unchecked item.** Tick boxes as you go and commit this file with the work.
 - [x] **Checkpoint 4** → commit, then **stop**
 - [x] Phase 10b — Navigation & Home redesign: Home is the board, recent issues, FAB, command palette, slim menu *(requested 2026-09-14)*
 - [x] **Checkpoint 4b** → commit, then **stop**
+- [x] Phase 10c — notey editor port + keybinds with a Ctrl-hold overlay *(requested 2026-09-25)*
+- [x] **Checkpoint 4c** → commit, then **stop**
 - [ ] Phase 11 — Documentation (dev + user), CHANGELOG review, TODO close-out *(later)*
 - [ ] **Checkpoint 5 (final)** *(later)*
 
@@ -207,6 +209,14 @@ Model: **project → versions → tasks of various types.**
 | D17 | **Home is the board.** `/` shows the recent-issues strip plus the board (project and version switcher, columns). `/board/` redirects to `/`, keeping its query. The Tables section and Home's project creation are removed. |
 | D18 | Opening a task from recent issues or the palette opens its **card dialog on the board** (`/?project&version&task`), in its oldest incomplete version, else its newest completed one. Unscheduled tasks open `/task/?edit=<id>` (`lib/ui/links.ts`). |
 | D19 | A **FAB** on every page offers New Task / New Version / New Project, using the create forms extracted from `/task`, `/version` and `/project`. New Task and New Version **prefill from the board context** (current project and version). |
+| D21 | **notey's markdown editor replaces planee's** (formula dialog with MathLive and a matrix picker, canvas math nodes, rebindable tool keys, footnote/drawing/diagram fixes). The **renderer is a hybrid**: planee's sanitised unified pipeline and Shiki stay; KaTeX is replaced by MathLive everywhere (canvas, preview, cells), with a filter that strips MathLive's `style`/`class`/`cssId`/`htmlData`/`href` commands, plus notey's "money isn't math" rule. |
+| D22 | The editor's tool keys (Formula Alt+F, Diagram Alt+M, Draw Alt+E, Footnotes Alt+0) are rebindable **per device** in Settings. They can't take an app keybind (`lib/ui/keymap.ts`) or Ctrl/Cmd+S. |
+| D23 | On a focused card, **Tab/PageDown go to the next card** and Shift+Tab/PageUp to the previous one. |
+| D24 | Ctrl+Shift+V stays paste-as-plain-text while typing in a field or editor; anywhere else it opens New Version. |
+| D25 | Browser-reserved chords keep their primary key **plus a fallback** (Ctrl+N → Alt+N, Ctrl+Shift+P → Alt+Shift+P). The overlay shows the fallback unless planee runs as an installed app window. |
+| D26 | Ctrl+1/2/3 open the **New Task modal** with the status preset to TODO / In Progress / Done, prefilled with the board's project and version. |
+| D27 | Ctrl+4 focuses and opens the **project picker**. Ctrl+Shift+E opens a new **Edit version modal** (number and markdown description). Ctrl+Shift+C starts "Mark complete". |
+| D28 | Holding Ctrl for about 0.4 s shows **key badges on the controls plus a cheat sheet** for the page (including focused-card keys). Releasing Ctrl or pressing any other key hides them. |
 | D20 | **Ctrl/Cmd+K command palette**: the create actions, recent and matching tasks/projects/versions, and the overview pages (Project, Version, Task, Version task, Assets, Preferences, Settings). The navbar keeps only **Home, Preferences and Settings**. |
 
 ---
@@ -594,6 +604,23 @@ flowchart LR
 - [x] 10b-D Tests: update the board and markdown UI specs for `/`, plus new FAB, palette, recent-issues and deep-link UI specs.
 
 ### ✅ Checkpoint 4b
+
+Full suite, commit, stop.
+
+---
+
+## Phase 10c — notey editor + keybinds
+
+Shared contracts written first by the main agent:
+
+- `lib/ui/keys.ts`: chord parse, match, format; `isEditableTarget`; `isInstalledApp`.
+- `lib/ui/keymap.ts`: every app keybind as data.
+- The harness can build elsewhere via `PLANEE_DIST_DIR` / `PLANEE_BIN_DIR`, so two agents can run it at once.
+
+- [x] 10c-E Editor port (D21, D22): notey's MarkdownEditor, dialogs, MathDialog and math libs; hybrid renderer; math fonts vendored and precached; Settings tool-key rebinding; palette tool rows; tests.
+- [x] 10c-K Keybinds (D23–D28): global and board handlers, focusable cards with keyboard moves, Edit version modal, New Task status preset, Ctrl overlay with badges and cheat sheet; tests.
+
+### ✅ Checkpoint 4c
 
 Full suite, commit, stop.
 

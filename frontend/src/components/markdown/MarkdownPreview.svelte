@@ -1,7 +1,8 @@
 <script lang="ts">
   /**
-   * Rendered markdown, the way a published page would show it: GFM, math,
-   * dual-theme code highlighting, and mermaid fences drawn as diagrams.
+   * Rendered markdown, the way a published page would show it: GFM, math
+   * (MathLive), dual-theme code highlighting, and mermaid fences drawn as
+   * diagrams.
    *
    * Usable on its own wherever you have a markdown string to display.
    * Re-renders are debounced so it can sit next to a keystroke source.
@@ -20,9 +21,14 @@
    *    changes: tests can wait for `[data-rendered="true"]`.
    *  - Footnote ids are namespaced per instance, so two previews on one page
    *    don't jump into each other's notes.
+   *  - Math (D21): the pipeline leaves `[data-math]` placeholders holding the
+   *    LaTeX as text, and a post-pass typesets them with MathLive
+   *    (lib/math/typeset.ts `renderMathIn`, from notey's preview), which
+   *    filters the LaTeX and MathLive's markup (lib/math/sanitize.ts). The
+   *    MathLive chunk and its vendored stylesheets load only when a render
+   *    actually contains math. KaTeX is gone.
    */
   import { tick } from 'svelte';
-  import 'katex/dist/katex.min.css';
 
   let {
     markdown = '',
@@ -81,6 +87,22 @@
     }
   }
 
+  /**
+   * Typeset the `[data-math]` placeholders the pipeline left behind. Lazy —
+   * MathLive's renderer loads only when there is a formula. One that will
+   * not typeset stays as its source.
+   */
+  async function renderMath(seq: number) {
+    if (!container?.querySelector('[data-math]')) return;
+    try {
+      const { renderMathIn } = await import('../../lib/math/typeset');
+      if (seq !== renderSeq || !container) return;
+      await renderMathIn(container);
+    } catch {
+      // Offline before the chunk was cached: the LaTeX stays readable.
+    }
+  }
+
   async function render(md: string) {
     const seq = ++renderSeq;
     try {
@@ -97,6 +119,9 @@
       if (seq !== renderSeq) return;
       html = out;
       await tick();
+      // Math first: it is quick; mermaid may take a while.
+      await renderMath(seq);
+      if (seq !== renderSeq) return;
       await renderMermaid(seq);
     } catch (err) {
       if (seq !== renderSeq) return;

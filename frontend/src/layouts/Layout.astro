@@ -5,6 +5,7 @@ import { href, isPath } from '../lib/paths';
 import Navbar from '../components/Navbar.svelte';
 import Fab from '../components/Fab.svelte';
 import CommandPalette from '../components/CommandPalette.svelte';
+import KeybindOverlay from '../components/KeybindOverlay.svelte';
 
 interface Props {
   title: string;
@@ -78,12 +79,22 @@ const onboardingPath = href('/onboarding/');
         import('../lib/testHook').then((m) => m.installTestHook());
       }
     </script>
+    <script>
+      // App keybinds (D23-D28): ONE capture-phase keydown listener for every
+      // page. Components register what the keys do while they are mounted
+      // (lib/ui/keybinds.ts): the FAB the global create keys, the board its
+      // column and card keys. A hoisted script, so it shares the module (and
+      // its registry) with the islands.
+      import { installKeybinds } from '../lib/ui/keybinds';
+      installKeybinds();
+    </script>
     <Navbar client:load {currentPath} />
     <main class="page" class:list={[{ 'has-fab': showFab }]}>
       <slot />
     </main>
     {showFab && <Fab client:only="svelte" />}
     <CommandPalette client:only="svelte" actions={showFab} />
+    <KeybindOverlay client:only="svelte" />
     {
       import.meta.env.PROD ? (
         <script is:inline>

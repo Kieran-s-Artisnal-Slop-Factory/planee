@@ -28,6 +28,15 @@
    * project/version becoming the shown selection records it (once per change,
    * not per re-read).
    *
+   * Keys (D23–D27, lib/ui/keybinds.ts; the chords are in lib/ui/keymap.ts):
+   * the board registers its `home` keys while mounted — Ctrl+1/2/3 New Task in
+   * that column (the FAB's dialog, status preset, this project and version),
+   * Ctrl+Shift+1/2/3 focus a column's first card, Ctrl+4 the project picker,
+   * Ctrl+Shift+C Mark complete, Ctrl+Shift+E the Edit version modal — and its
+   * `card` keys, live while a card has focus (Tab/PageDown, Shift+Tab/PageUp,
+   * Ctrl+E, Ctrl+arrows: KanbanBoard's keyboard methods). On a completed
+   * version the writing keys are disabled (swallowed, dimmed in the overlay).
+   *
    * Test hooks (data-testid): board-root (data-project, data-version,
    * data-readonly), board-project-select, board-version-current,
    * board-version-option, board-completed-toggle, board-completed-version,
@@ -38,12 +47,14 @@
    * version-description, task-description, task-subtasks, card-type,
    * card-resolution, card-subtasks, card-type-select, card-resolution-select,
    * card-bump, unscheduled, unscheduled-task, unscheduled-add, sync-pill,
-   * sync-now, board-error, board-empty, board-new-project. KanbanBoard's own hooks are data attributes — see
+   * sync-now, board-error, board-empty, board-new-project, board-edit-version
+   * (and EditVersionDialog's). KanbanBoard's own hooks are data attributes — see
    * the Phase 9 report / KanbanBoard.svelte.
    */
   import { onMount } from 'svelte';
   import KanbanBoard from '../kanban/KanbanBoard.svelte';
   import MarkdownField from '../markdown/MarkdownField.svelte';
+  import EditVersionDialog from './EditVersionDialog.svelte';
   import { all, byIndex, get } from '../../lib/db/repo';
   import { onChanged } from '../../lib/db/changes';
   import { TASK_TYPE_VALUES, isDoneStatus } from '../../lib/db/types';
@@ -75,6 +86,8 @@
   import { BOARD_LAST_KEY, pickTaskVersion, taskEditHref, type BoardTarget } from '../../lib/ui/links';
   import { recordView } from '../../lib/ui/recent';
   import { openCreate } from '../../lib/ui/commands';
+  import { registerKeyHandlers } from '../../lib/ui/keybinds';
+  import type { CardDirection } from '../../lib/board/keyboard';
   import { TASK_TYPE_TONES } from '../../lib/ui/recentIssues';
 
   const LAST_KEY = BOARD_LAST_KEY;
@@ -94,6 +107,15 @@
   let newVersionOpen = $state(false);
   let newVersionNumber = $state('');
   let unscheduledOpen = $state(false);
+
+  let editingVersion = $state(false);
+  // A version completed (or deleted) elsewhere takes its Edit dialog with it,
+  // for good: reopening it later must not bring the dialog back.
+  $effect(() => {
+    if (editingVersion && (!version || version.completed)) editingVersion = false;
+  });
+  let kanban = $state<ReturnType<typeof KanbanBoard>>();
+  let projectSelect = $state<HTMLSelectElement>();
 
   let completing = $state<{ todo: number; inProgress: number; target: string; exists: boolean } | null>(null);
   let completeNumber = $state('');
@@ -341,6 +363,65 @@
     };
   });
 
+  // ── Keys ───────────────────────────────────────────────────────────────────
+
+  const COLUMNS: StatusTypeKey[] = ['todo', 'in_progress', 'done'];
+  /** A version is showing and can be written to. */
+  const writable = () => !!version && !version.completed;
+
+  /** Ctrl+4: the project picker, opened where the browser allows it. */
+  function openProjectPicker() {
+    const select = projectSelect;
+    if (!select) return;
+    select.focus();
+    try {
+      select.showPicker();
+    } catch {
+      // No showPicker (or no user activation): focused is the next best thing.
+    }
+  }
+
+  onMount(() => {
+    const home: Parameters<typeof registerKeyHandlers>[1] = {
+      'board.project': { run: openProjectPicker, enabled: () => !!projectSelect },
+      'version.complete': { run: openComplete, enabled: () => writable() && !!data },
+      'version.edit': { run: () => (editingVersion = true), enabled: writable },
+    };
+    for (const status of COLUMNS) {
+      home[`column.${status}.new`] = {
+        // D26: the FAB's New Task dialog, this board's project and version, the column's status.
+        run: () => openCreate('task', { status, project: projectId, version: versionId }),
+        enabled: writable,
+      };
+      home[`column.${status}.focus`] = {
+        run: () => void kanban?.focusFirstCard(status),
+        enabled: () => !!version && !!kanban,
+      };
+    }
+    const move = (direction: CardDirection) => ({
+      run: () => void kanban?.moveFocusedCard(direction),
+      enabled: () => !readonly,
+    });
+    const stopHome = registerKeyHandlers('home', home);
+    const stopCard = registerKeyHandlers(
+      'card',
+      {
+        'card.next': () => kanban?.focusNeighbourCard(1) ?? false,
+        'card.prev': () => kanban?.focusNeighbourCard(-1) ?? false,
+        'card.edit': { run: () => void kanban?.editFocusedCard(), enabled: () => !readonly },
+        'card.up': move('up'),
+        'card.down': move('down'),
+        'card.left': move('left'),
+        'card.right': move('right'),
+      },
+      { active: () => !!kanban?.focusedCardId() }
+    );
+    return () => {
+      stopHome();
+      stopCard();
+    };
+  });
+
   // ── Selection ──────────────────────────────────────────────────────────────
 
   function selectProject(id: string) {
@@ -444,6 +525,11 @@
     if (!version) return;
     const id = version.id;
     await run(() => actions.reopenVersion(id));
+  }
+
+  /** The Edit version modal's save: only the fields it changed (D10). */
+  async function saveVersionEdit(id: string, changes: { number?: string; description?: string | null }) {
+    await actions.patchVersion(id, changes);
   }
 
   async function saveVersionDescription(id: string, md: string) {
@@ -612,6 +698,8 @@
           <span class="visually-hidden">Project</span>
           <select
             data-testid="board-project-select"
+            data-keybind="board.project"
+            bind:this={projectSelect}
             value={projectId}
             onchange={(event) => selectProject(event.currentTarget.value)}
           >
@@ -797,7 +885,22 @@
               Reopen version
             </button>
           {:else}
-            <button type="button" class="btn btn-primary" data-testid="board-mark-complete" onclick={openComplete}>
+            <button
+              type="button"
+              class="btn"
+              data-testid="board-edit-version"
+              data-keybind="version.edit"
+              onclick={() => (editingVersion = true)}
+            >
+              Edit version
+            </button>
+            <button
+              type="button"
+              class="btn btn-primary"
+              data-testid="board-mark-complete"
+              data-keybind="version.complete"
+              onclick={openComplete}
+            >
               Mark complete
             </button>
           {/if}
@@ -826,6 +929,8 @@
 
       {#key version.id}
         <KanbanBoard
+          bind:this={kanban}
+          keyboard
           {cards}
           {schema}
           {readonly}
@@ -875,6 +980,19 @@
     {/if}
   {/if}
 </div>
+
+{#if editingVersion && version && !version.completed}
+  {#key version.id}
+    <EditVersionDialog
+      {version}
+      {versions}
+      nonce={assetNonce}
+      getFresh={() => get<Version>('version', version!.id)}
+      onSave={(changes) => saveVersionEdit(version!.id, changes)}
+      onClose={() => (editingVersion = false)}
+    />
+  {/key}
+{/if}
 
 {#if completing && version}
   <div

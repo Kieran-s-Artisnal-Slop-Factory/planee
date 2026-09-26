@@ -15,9 +15,14 @@
    * The caller owns the document: `onSave` receives the diagram source and
    * decides where it goes.
    *
-   * Ported from retoken (af25bc6) src/components/DiagramDialog.svelte —
-   * unchanged apart from import paths. The live preview is mermaid's own SVG
-   * rendered with `securityLevel: 'strict'` (lib/markdown/mermaid.ts).
+   * Ported from retoken (af25bc6) src/components/DiagramDialog.svelte. The
+   * live preview is mermaid's own SVG rendered with `securityLevel: 'strict'`
+   * (lib/markdown/mermaid.ts). From notey's copy (10c-E): the editor chrome as
+   * an `EditorView.theme` on the theme's --editor-* tokens, an accessible name
+   * for the source, `md-diagram-*` test ids, and Escape handled on `document`
+   * and `preventDefault`ed — so it closes this dialog and never the card or
+   * create dialog around the editor, nor the markdown field's edit. An open
+   * completion popup keeps Escape for itself.
    */
   import { onDestroy, onMount } from 'svelte';
   import { EditorView, keymap } from '@codemirror/view';
@@ -61,6 +66,49 @@
   let rendering = $state(false);
   let timer: ReturnType<typeof setTimeout> | undefined;
   let seq = 0;
+
+  /** The editor chrome, on the theme's --editor-* tokens (ported from notey). */
+  const chrome = EditorView.theme({
+    '&': {
+      backgroundColor: 'transparent',
+      color: 'var(--text-color)',
+      height: '100%',
+      fontSize: 'var(--font-size-sm)',
+    },
+    '.cm-content': {
+      caretColor: 'var(--editor-cursor)',
+      fontFamily: 'var(--font-mono)',
+      padding: 'var(--space-2)',
+    },
+    '.cm-cursor, .cm-dropCursor': { borderLeftColor: 'var(--editor-cursor)' },
+    '&.cm-focused > .cm-scroller > .cm-selectionLayer .cm-selectionBackground, .cm-selectionBackground, .cm-content ::selection':
+      { backgroundColor: 'var(--editor-selection)' },
+    '.cm-activeLine': { backgroundColor: 'var(--editor-active-line)' },
+    '&.cm-focused': { outline: 'none' },
+    '.cm-tooltip': {
+      backgroundColor: 'var(--editor-tooltip-bg)',
+      color: 'var(--editor-tooltip-fg)',
+      border: '1px solid var(--editor-tooltip-border)',
+      borderRadius: 'var(--radius-md)',
+      boxShadow: 'var(--shadow-2)',
+    },
+    '.cm-tooltip.cm-tooltip-autocomplete > ul': {
+      fontFamily: 'var(--font-mono)',
+      fontSize: 'var(--font-size-sm)',
+      maxHeight: '15em',
+    },
+    '.cm-tooltip-autocomplete > ul > li': { padding: '2px 6px' },
+    '.cm-tooltip-autocomplete > ul > li[aria-selected]': {
+      backgroundColor: 'var(--editor-tooltip-selected-bg)',
+      color: 'var(--editor-tooltip-selected-fg)',
+    },
+    '.cm-completionMatchedText': {
+      color: 'var(--editor-match-fg)',
+      textDecoration: 'none',
+      fontWeight: '700',
+    },
+    '.cm-completionDetail': { color: 'var(--text-muted-color)', fontStyle: 'italic' },
+  });
 
   /** Map the language package's tags onto the theme's syntax colours. */
   const highlight = HighlightStyle.define([
@@ -162,9 +210,11 @@
           Prec.high(keymap.of([{ key: 'Mod-Enter', run: () => (save(), true) }])),
           keymap.of([...defaultKeymap, ...historyKeymap]),
           mermaidLang(),
+          chrome,
           syntaxHighlighting(highlight),
           autocompletion({ override: [mermaidCompletionSource] }),
           EditorView.lineWrapping,
+          EditorView.contentAttributes.of({ 'aria-label': 'Diagram source' }),
           EditorView.updateListener.of((u) => {
             if (!u.docChanged) return;
             code = u.state.doc.toString();
@@ -181,25 +231,42 @@
     clearTimeout(timer);
     cm?.destroy();
   });
-</script>
 
-<svelte:window onkeydown={(e) => e.key === 'Escape' && onCancel()} />
+  /**
+   * Escape (document, bubble phase — after CodeMirror, before the window
+   * listeners of the dialogs around this one): an Escape nobody has handled
+   * cancels this dialog and is marked handled, so the card dialog, the
+   * create dialog and the markdown field around the editor leave it alone.
+   * One CodeMirror used — closing its completion popup — keeps the dialog.
+   */
+  onMount(() => {
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape' || event.defaultPrevented) return;
+      event.preventDefault();
+      onCancel();
+    };
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  });
+</script>
 
 <div
   class="backdrop"
   role="presentation"
   onclick={(e) => e.target === e.currentTarget && onCancel()}
 >
-  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="diagram-title">
+  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="diagram-title" data-testid="md-diagram-dialog" data-md-dialog>
     <div class="head">
       <h3 id="diagram-title">{initial ? 'Edit diagram' : 'New diagram'}</h3>
-      <button class="close" aria-label="Close" onclick={onCancel}>×</button>
+      <button type="button" class="close" aria-label="Close" onclick={onCancel}>×</button>
     </div>
 
     <div class="templates">
       <span class="muted small">Start from:</span>
       {#each DIAGRAM_TEMPLATES as t (t.id)}
-        <button type="button" class="btn btn-sm" onclick={() => setDoc(t.code)}>{t.label}</button>
+        <button type="button" class="btn btn-sm" data-testid="md-diagram-template-{t.id}" onclick={() => setDoc(t.code)}
+          >{t.label}</button
+        >
       {/each}
     </div>
 
@@ -240,8 +307,8 @@
       <span class="muted small">
         Inserted as a <code>```mermaid</code> code block — a published page renders it too.
       </span>
-      <button class="btn" onclick={onCancel}>Cancel</button>
-      <button class="btn btn-primary" onclick={save} disabled={!code.trim()}>
+      <button type="button" class="btn" data-testid="md-diagram-cancel" onclick={onCancel}>Cancel</button>
+      <button type="button" class="btn btn-primary" data-testid="md-diagram-save" onclick={save} disabled={!code.trim()}>
         {initial ? 'Update diagram' : 'Insert diagram'}
       </button>
     </div>
@@ -332,46 +399,7 @@
     background: var(--editor-bg);
   }
 
-  .cm-host :global(.cm-editor) {
-    height: 100%;
-    background: transparent;
-    color: var(--text-color);
-    font-size: var(--font-size-sm);
-  }
-
-  .cm-host :global(.cm-content) {
-    padding: var(--space-2);
-    font-family: var(--font-mono);
-  }
-
-  .cm-host :global(.cm-editor.cm-focused) {
-    outline: none;
-  }
-
-  .cm-host :global(.cm-cursor) {
-    border-left-color: var(--editor-cursor);
-  }
-
-  .cm-host :global(.cm-activeLine) {
-    background: var(--editor-active-line);
-  }
-
-  .cm-host :global(.cm-selectionBackground),
-  .cm-host :global(.cm-editor ::selection) {
-    background: var(--editor-selection);
-  }
-
-  .cm-host :global(.cm-tooltip-autocomplete) {
-    background: var(--editor-tooltip-bg);
-    color: var(--editor-tooltip-fg);
-    border: 1px solid var(--editor-tooltip-border);
-    border-radius: var(--radius-md);
-  }
-
-  .cm-host :global(.cm-tooltip-autocomplete ul li[aria-selected]) {
-    background: var(--editor-tooltip-selected-bg);
-    color: var(--editor-tooltip-selected-fg);
-  }
+  /* The rest of CodeMirror's look is the `chrome` theme in the script. */
 
   .preview {
     flex: 1;

@@ -513,3 +513,30 @@ test('deleting a card whose task has no other link tombstones the link and the t
   ]);
   assertInvariantsEverywhere(legs);
 });
+
+test('a card dialog with a very long description stays within the screen, with its buttons reachable', async ({
+  deviceA,
+}) => {
+  const longDescription = Array.from({ length: 200 }, (_, i) => `Line ${i + 1} of a long description.`).join('\n\n');
+  await seedProject(deviceA, {
+    project: { id: 'tall-p', name: 'Tall' },
+    versions: [{ id: 'tall-v', number: '0.1.0' }],
+    cards: [{ task: 'tall-t', link: 'tall-l', title: 'Tall card', description: longDescription }],
+  });
+  const page = deviceA.page;
+  await openBoard(deviceA, 'tall-p', 'tall-v');
+  await expectSettledCard(page, 'todo', 'tall-l');
+
+  const dialog = await openCardDialog(page, 'tall-l');
+  await expect(dialog.getByTestId('task-description-preview').locator('[data-rendered="true"]')).toHaveCount(1);
+  const viewport = page.viewportSize()!;
+  const box = (await dialog.boundingBox())!;
+  // The regression: the modal grew with its content, past the bottom edge.
+  expect(box.y).toBeGreaterThanOrEqual(0);
+  expect(box.y + box.height).toBeLessThanOrEqual(viewport.height);
+  // Its own buttons are on screen without scrolling the page…
+  await expect(dialog.locator('.close-btn')).toBeInViewport();
+  // …and the long body scrolls inside the dialog instead.
+  const doc = dialog.locator('.doc');
+  expect(await doc.evaluate((el) => el.scrollHeight > el.clientHeight)).toBe(true);
+});

@@ -4,29 +4,10 @@ import { fileURLToPath } from 'node:url';
 
 import svelte from '@astrojs/svelte';
 
-/**
- * KaTeX ships every font as woff2 + woff + ttf, and its stylesheet lists all
- * three in each @font-face. Every browser planee supports takes woff2, so the
- * other two only bloat the build and the offline precache (D11). This PostCSS
- * step runs after Vite inlines @imports (so it also sees the copy Crepe's
- * latex.css pulls in) and before Vite resolves url()s, so the dropped files
- * are never emitted at all.
- *
- * @type {import('postcss').PluginCreator<void>}
- */
-const woff2OnlyFonts = () => ({
-  postcssPlugin: 'planee-woff2-only-fonts',
-  AtRule: {
-    'font-face'(rule) {
-      rule.walkDecls('src', (decl) => {
-        const sources = decl.value.split(/,(?![^(]*\))/).map((s) => s.trim());
-        const woff2 = sources.filter((s) => /format\(["']?woff2["']?\)|\.woff2["')]/.test(s));
-        if (woff2.length > 0 && woff2.length < sources.length) decl.value = woff2.join(', ');
-      });
-    },
-  },
-});
-woff2OnlyFonts.postcss = true;
+// No KaTeX stylesheet is bundled any more (D21: MathLive draws every formula,
+// from the woff2 faces vendored in public/math/, and the editor skips Crepe's
+// latex.css), so the PostCSS step that stripped KaTeX's woff/ttf sources (D11)
+// is gone: with nothing left to strip, the build was byte-identical without it.
 
 /**
  * Excalidraw lazy-loads its UI translations from 55 locale chunks. planee's
@@ -78,9 +59,6 @@ export default defineConfig({
           replacement: fileURLToPath(new URL('./src/lib/markdown/codemirror-language-data.ts', import.meta.url)),
         },
       ],
-    },
-    css: {
-      postcss: { plugins: [woff2OnlyFonts()] },
     },
     plugins: [excalidrawEnglishOnly()],
   },

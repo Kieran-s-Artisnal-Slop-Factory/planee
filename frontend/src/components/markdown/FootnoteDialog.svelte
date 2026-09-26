@@ -35,18 +35,6 @@
      */
     returnTo: string | null;
   }
-
-  /**
-   * **Alt+0** — the one key for "the other half of this".
-   *
-   * Matched on the physical key so a layout that puts something else on
-   * Alt+0 (macOS gives `º`) still works, with the printable digit as a
-   * fallback for layouts that report neither.
-   */
-  export function isFootnoteKey(event: KeyboardEvent): boolean {
-    if (!event.altKey || event.ctrlKey || event.metaKey) return false;
-    return event.code === 'Digit0' || event.code === 'Numpad0' || event.key === '0';
-  }
 </script>
 
 <script lang="ts">
@@ -64,20 +52,30 @@
    * `renameFootnote` / `removeFootnote`, which is why they are one operation
    * each rather than two.
    *
-   * Ported from retoken (af25bc6) src/components/FootnoteDialog.svelte —
-   * unchanged apart from import paths.
+   * Ported from retoken (af25bc6) src/components/FootnoteDialog.svelte, with
+   * notey's changes (10c-E): it closes on whichever key opened it
+   * (`closeKey`, the rebindable footnote shortcut) instead of a hard-coded
+   * Alt+0, and ignores keys until a task boundary after it mounts (`armed`);
+   * `md-footnote-*` test ids. planee: its keys are handled on `document`
+   * and `preventDefault`ed, so Escape here never closes the card or create
+   * dialog around the editor, nor the markdown field's edit.
    */
+  import { onDestroy, onMount } from 'svelte';
   import { slugifyLabel } from '../../lib/markdown/footnotes';
+  import { DEFAULT_SHORTCUTS, matches, shortcutLabel } from '../../lib/markdown/shortcuts';
 
   let {
     notes,
-    /** Open with this note's text under the caret — how Alt+0 arrives. */
+    /** Open with this note's text under the caret — how the shortcut arrives. */
     focusLabel = undefined,
+    /** The shortcut that opened this, which also closes it. */
+    closeKey = DEFAULT_SHORTCUTS.footnotes,
     onSave,
     onCancel,
   }: {
     notes: FootnoteSeed[];
     focusLabel?: string;
+    closeKey?: string;
     onSave: (rows: FootnoteRow[], options: FootnoteSaveOptions) => void;
     onCancel: () => void;
   } = $props();
@@ -106,15 +104,20 @@
    * text — arriving from a citation, the note is what you came to write.
    */
   let landed = false;
+  /** The dialog itself: focus goes here when there is no note to land in, so
+   *  the keyboard is the dialog's (a modal), not the text's behind it. */
+  let modal = $state<HTMLDivElement | undefined>();
   $effect(() => {
-    if (landed || !host) return;
+    if (landed || !modal) return;
     landed = true;
-    if (!focusLabel) return;
-    const row = rows.find((candidate) => candidate.label === focusLabel);
-    if (!row) return;
-    const field = host.querySelector<HTMLTextAreaElement>(`textarea[data-row="${row.id}"]`);
-    field?.focus();
-    field?.setSelectionRange(field.value.length, field.value.length);
+    const row = focusLabel ? rows.find((candidate) => candidate.label === focusLabel) : undefined;
+    const field = row ? host?.querySelector<HTMLTextAreaElement>(`textarea[data-row="${row.id}"]`) : null;
+    if (!field) {
+      modal.focus();
+      return;
+    }
+    field.focus();
+    field.setSelectionRange(field.value.length, field.value.length);
   });
 
   /**
@@ -189,37 +192,93 @@
     );
   }
 
+  /*
+   * The keystroke that OPENED this dialog is still being dispatched when
+   * the document listener below is registered: Svelte flushes the mount at
+   * the end of the delegated handler, and document is visited after the
+   * island root, so that very shortcut would reach onKey and close the
+   * dialog on the frame it opened — it never even painted. A timer, not a
+   * timestamp: a task boundary is the one thing guaranteed to be after the
+   * current dispatch. A key aimed INSIDE the dialog is never the opening one,
+   * though, so it counts at once — a busy page (Excalidraw just unmounted)
+   * can hold the timer back past a quick second press.
+   */
+  let armed = $state(false);
+  onMount(() => {
+    const id = setTimeout(() => (armed = true), 0);
+    return () => clearTimeout(id);
+  });
+
+  /**
+   * Where focus was when this opened. A save puts the caret at the citation
+   * itself (the editor's returnFromFootnotes); anything else — Cancel,
+   * Escape — hands focus back here rather than dropping it on the page.
+   */
+  const cameFrom = typeof document === 'undefined' ? null : (document.activeElement as HTMLElement | null);
+  onDestroy(() => {
+    const active = document.activeElement;
+    const stranded = !active || active === document.body || (modal?.contains(active) ?? false);
+    if (stranded && cameFrom?.isConnected) cameFrom.focus?.();
+  });
+
+  /**
+   * On `document`, bubble phase: after whatever has focus has had its say,
+   * and before the window listeners of the dialogs around the editor, which
+   * skip a key that is marked handled. The dialog's own keys (the shortcut,
+   * Ctrl+Enter) count even when something below marked them handled: the
+   * canvas behind can still have focus for a moment after the shortcut
+   * opened this, and ProseMirror claims Alt-combinations for itself.
+   */
   function onKey(event: KeyboardEvent) {
+    const inside = event.target instanceof Node && (modal?.contains(event.target) ?? false);
+    if (!armed && !inside) return;
     if (event.key === 'Escape') {
+      // One something inside already used (closing a native picker, say) is theirs.
+      if (event.defaultPrevented) return;
+      event.preventDefault();
       onCancel();
       return;
     }
     // Ctrl/Cmd+Enter saves, matching the other dialogs.
     if (event.key === 'Enter' && (event.ctrlKey || event.metaKey)) {
+      event.preventDefault();
       save();
       return;
     }
-    // The key that opened this closes it again. In a note, it hands you back
+    // The key that opened this closes it again — whichever key that is, so
+    // a rebound shortcut still works both ways. In a note, it hands you back
     // to where that note is cited; anywhere else it just puts the list away.
-    if (isFootnoteKey(event)) {
+    if (matches(event, closeKey)) {
       event.preventDefault();
       const row = activeRow();
       save(row ? trimmed(row) : null);
     }
   }
-</script>
 
-<svelte:window onkeydown={onKey} />
+  onMount(() => {
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  });
+</script>
 
 <div
   class="backdrop"
   role="presentation"
   onclick={(e) => e.target === e.currentTarget && onCancel()}
 >
-  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="footnote-title">
+  <!-- svelte-ignore a11y_no_noninteractive_element_to_interactive_role -->
+  <div
+    class="modal"
+    role="dialog"
+    aria-modal="true"
+    aria-labelledby="footnote-title"
+    data-testid="md-footnote-dialog" data-md-dialog
+    tabindex="-1"
+    bind:this={modal}
+  >
     <div class="head">
       <h3 id="footnote-title">Footnotes</h3>
-      <button class="close" aria-label="Close" onclick={onCancel}>×</button>
+      <button type="button" class="close" aria-label="Close" onclick={onCancel}>×</button>
     </div>
 
     <p class="muted small intro">
@@ -239,6 +298,7 @@
                 <span class="visually-hidden">Label</span>
                 <input
                   class="label-input"
+                  data-testid="md-footnote-label"
                   value={row.label}
                   spellcheck="false"
                   autofocus={row.id === addedId}
@@ -252,6 +312,7 @@
                 <textarea
                   rows="2"
                   placeholder="The note…"
+                  data-testid="md-footnote-text"
                   data-row={row.id}
                   value={row.text}
                   oninput={(e) => (row.text = e.currentTarget.value)}
@@ -301,11 +362,17 @@
     <div class="actions">
       <button type="button" class="btn btn-sm add" onclick={add}>+ New footnote</button>
       <span class="muted small hint">
-        <kbd>Ctrl</kbd>+<kbd>Enter</kbd> saves · <kbd>Alt</kbd>+<kbd>0</kbd> saves and goes back to
-        the note you are in
+        <kbd>Ctrl</kbd>+<kbd>Enter</kbd> saves{#if closeKey}
+          · <kbd>{shortcutLabel(closeKey)}</kbd> saves and goes back to the note you are in{/if}
       </span>
-      <button class="btn" onclick={onCancel}>Cancel</button>
-      <button class="btn btn-primary" onclick={() => save()} disabled={!valid}>
+      <button type="button" class="btn" data-testid="md-footnote-cancel" onclick={onCancel}>Cancel</button>
+      <button
+        type="button"
+        class="btn btn-primary"
+        data-testid="md-footnote-save"
+        onclick={() => save()}
+        disabled={!valid}
+      >
         Save footnotes
       </button>
     </div>
@@ -321,6 +388,10 @@
     place-items: center;
     z-index: 70;
     padding: var(--space-4);
+  }
+
+  .modal:focus {
+    outline: none;
   }
 
   .modal {

@@ -49,8 +49,26 @@
    *   resolveImage, previewNonce  passed through to MarkdownPreview
    *   openCardId                  open that card's dialog from outside (a deep link)
    *   onDialogOpen, onDialogClose the dialog opened (any way) / closed
+   *   keyboard                    focusable cards + the methods below (D23)
    * `readonly` disables drag (mouse, touch, keyboard), the composer, editing and
    * delete; the snippets still render and the host decides what they show.
+   *
+   * ── Focusable cards (planee, `keyboard`) ───────────────────────────────────
+   * Each card is a focus target of its own (tabindex -1, a ring), and the host
+   * binds keys to these methods (planee: lib/ui/keybinds.ts, Board.svelte):
+   *   focusedCardId()            the card that has focus, or null
+   *   focusFirstCard(status)     focus a column's top card (flashes an empty column)
+   *   focusNeighbourCard(1|-1)   next/previous card in reading order; false at the ends
+   *   moveFocusedCard(direction) up/down in the column, left/right to the top of
+   *                              the neighbouring column - through the SAME commit
+   *                              as a drop (planDrop -> change -> onUpdate), so
+   *                              ordering, optimistic state, Retry/Undo and the
+   *                              announcement behave exactly like a drag
+   *   editFocusedCard()          open the card's dialog with its editor
+   * Focus stays on a moved card (it is found again by id after it re-renders).
+   * Enter on a focused card opens its dialog; closing a dialog opened from the
+   * card puts focus back on the card. Cards and column heads carry
+   * `data-keybind` for the Ctrl overlay's badges.
    *
    * ── Known gaps (inherited from retoken) ────────────────────────────────────
    *  - No swimlanes: one row of status columns only.
@@ -87,6 +105,13 @@
     type PendingPatch,
   } from '../../lib/kanban/board';
   import { dueFromDay } from '../../lib/kanban/dates';
+  import {
+    firstCard,
+    neighbourCard,
+    planKeyboardMove,
+    type CardDirection,
+    type ColumnCards,
+  } from '../../lib/board/keyboard';
   import {
     normalizeSchema,
     sampleKeys,
@@ -133,6 +158,7 @@
     openCardId = null,
     onDialogOpen = undefined,
     onDialogClose = undefined,
+    keyboard = false,
   }: {
     /** Your objects, in your own shape. Never mutated. */
     cards?: CardRecord[];
@@ -234,6 +260,11 @@
     onDialogOpen?: ((card: CardRecord) => void) | undefined;
     /** The dialog closed (the reader closed it, or its card went away). */
     onDialogClose?: ((card: CardRecord | undefined) => void) | undefined;
+    /**
+     * Focusable cards and the keyboard methods (see the header): each card is
+     * a focus target, and cards and column heads carry `data-keybind`.
+     */
+    keyboard?: boolean;
   } = $props();
 
   const model = $derived(normalizeSchema(schema, sampleKeys(cards)));
@@ -802,16 +833,27 @@
       return;
     }
 
-    const column = columns.find((item) => item.status.id === to.status);
+    if (!commitMove(entry, from.fromStatus, to.status, to.index)) return;
+    // The card was rebuilt in its new column, taking the focused grip with it.
+    if (from.mode === 'keyboard') void focusCard(entry.id, '.kb-grip');
+  }
+
+  /**
+   * Write a move: `index` is the card's place among the destination column's
+   * OTHER visible cards. The one commit path for a pointer drop, a grip drop
+   * and a keyboard move (moveFocusedCard). False when the status has no column.
+   */
+  function commitMove(entry: Entry, fromStatus: string, toStatus: string, index: number): boolean {
+    const column = columns.find((item) => item.status.id === toStatus);
     // Nothing on this board answers to that status: there is no move to make.
-    if (!column) return;
+    if (!column) return false;
     const seen = column.entries.filter((item) => item.id !== entry.id);
-    const others = (allColumns.find((item) => item.status.id === to.status)?.entries ?? [])
+    const others = (allColumns.find((item) => item.status.id === toStatus)?.entries ?? [])
       .filter((item) => item.id !== entry.id)
       .map((item) => ({ id: item.id, key: sortKeyOf(item) }));
     // The reader aimed at what they could see; `planDrop` anchors that to the
     // real column, and only sends a status when the card changed column.
-    const plan = planDrop(entry.id, from.fromStatus, to.status, others, seen, to.index);
+    const plan = planDrop(entry.id, fromStatus, toStatus, others, seen, index);
 
     void change(entry, plan.fields);
     // A renumbered column means every other card in it moved too.
@@ -820,9 +862,8 @@
       if (other) void change(other, { order: slot.key });
     }
 
-    say(`${entry.title} moved to ${column.status.label}, position ${to.index + 1}.`);
-    // The card was rebuilt in its new column, taking the focused grip with it.
-    if (from.mode === 'keyboard') void focusCard(entry.id, '.kb-grip');
+    say(`${entry.title} moved to ${column.status.label}, position ${index + 1}.`);
+    return true;
   }
 
   // ── Moving a card from the keyboard ────────────────────────────────────────
@@ -913,6 +954,117 @@
     event.preventDefault();
   }
 
+  // ── Focusable cards (D23) ──────────────────────────────────────────────────
+
+  /** The columns as shown: what "next card" and "move right" are measured against. */
+  const shownCards = (): ColumnCards[] =>
+    columns.map((column) => ({ status: column.status.id, ids: column.entries.map((entry) => entry.id) }));
+
+  const cardEl = (id: string): HTMLElement | null =>
+    scroller?.querySelector<HTMLElement>(`[data-kanban-card][data-id="${CSS.escape(id)}"]`) ?? null;
+
+  /** The card whose dialog should hand focus back to the card itself on close. */
+  let returnToCard: string | null = null;
+  /** A column flashing because a key asked for its first card and it has none. */
+  let flashing = $state<string | null>(null);
+  let flashTimer: ReturnType<typeof setTimeout> | undefined;
+  $effect(() => () => clearTimeout(flashTimer));
+
+  function focusCardEl(id: string): boolean {
+    const el = cardEl(id);
+    if (!el) return false;
+    el.focus({ preventScroll: true });
+    el.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+    return document.activeElement === el;
+  }
+
+  /** Focus a card by id once the DOM has caught up (it may just have moved). */
+  async function refocusCard(id: string) {
+    await tick();
+    focusCardEl(id);
+  }
+
+  /** The id of the card that has keyboard focus (the card itself, not a control in it). */
+  export function focusedCardId(): string | null {
+    const active = typeof document === 'undefined' ? null : document.activeElement;
+    if (!(active instanceof HTMLElement) || !active.matches('[data-kanban-card]')) return null;
+    if (!scroller?.contains(active)) return null;
+    const id = active.dataset.id ?? null;
+    return id && entryById.has(id) ? id : null;
+  }
+
+  /** Focus a column's top card. An empty column flashes instead and says so; returns false. */
+  export function focusFirstCard(status: string): boolean {
+    const id = firstCard(shownCards(), status);
+    const label = columnOf(status)?.status.label ?? status;
+    if (!id) {
+      clearTimeout(flashTimer);
+      flashing = status;
+      flashTimer = setTimeout(() => (flashing = null), 700);
+      say(`${label} has no cards.`);
+      return false;
+    }
+    return focusCardEl(id);
+  }
+
+  /** Focus the next (1) or previous (-1) card in reading order; false at either end. */
+  export function focusNeighbourCard(delta: 1 | -1): boolean {
+    const id = focusedCardId();
+    if (!id) return false;
+    const next = neighbourCard(shownCards(), id, delta);
+    return next ? focusCardEl(next) : false;
+  }
+
+  /**
+   * Move the focused card one place up/down, or to the top of the column to
+   * its left/right (Done -> In Progress whatever its resolution). Returns
+   * whether it moved; at an edge it says so instead.
+   */
+  export function moveFocusedCard(direction: CardDirection): boolean {
+    const id = focusedCardId();
+    if (!id || readonly || drag) return false;
+    const entry = entryById.get(id);
+    if (!entry) return false;
+    const plan = planKeyboardMove(shownCards(), id, direction);
+    if (!plan) {
+      const edge = { up: 'at the top', down: 'at the bottom', left: 'in the first column', right: 'in the last column' };
+      say(`${entry.title} is already ${edge[direction]}.`);
+      return false;
+    }
+    if (!commitMove(entry, plan.fromStatus, plan.toStatus, plan.index)) return false;
+    void refocusCard(id);
+    return true;
+  }
+
+  /** Open the focused card's dialog with its editor showing (the "edit modal"). */
+  export function editFocusedCard(): boolean {
+    const id = focusedCardId();
+    const entry = id ? entryById.get(id) : undefined;
+    if (!entry || readonly || !editable) return false;
+    show(entry);
+    returnToCard = entry.id;
+    // The editor a tick later, from an unfocused page: the dialog focuses
+    // itself as it mounts, and Svelte's `autofocus` (CardForm's title) only
+    // takes focus from <body> — as it does when the dialog's Edit button,
+    // clicked, goes away.
+    void tick().then(() => {
+      if (openId !== entry.id) return;
+      if (document.activeElement instanceof HTMLElement) document.activeElement.blur();
+      openEditing = true;
+    });
+    return true;
+  }
+
+  /** Enter on a focused card: its dialog, focus coming back to the card after. */
+  function openFromCard(entry: Entry) {
+    open(entry);
+    if (openId === entry.id) returnToCard = entry.id;
+  }
+
+  /** What a column head's badges say it answers to (planee's keymap ids). */
+  const columnKeybinds = (status: string) => `column.${status}.new column.${status}.focus`;
+  const CARD_KEYBINDS = 'card.edit card.up@top card.down@bottom card.left@left card.right@right';
+
   /** The insertion line for a column, when the drag is aiming at it. */
   const lineIn = (status: string) => (drag && target?.status === status ? target : null);
 
@@ -959,6 +1111,7 @@
     editingId = null;
     composerIn = null;
     openEditing = false;
+    returnToCard = null;
     openId = entry.id;
     onDialogOpen?.(entry.card);
   }
@@ -968,9 +1121,13 @@
     const card = id ? (entryById.get(id)?.card ?? lastOpenCard) : undefined;
     openId = null;
     openEditing = false;
-    // Back to the title that opened it, which is where the reader was.
+    const toCard = returnToCard === id;
+    returnToCard = null;
+    // Back to where the reader was: the title that opened it, or the card
+    // itself when it was opened from the keyboard on a focused card.
     if (id) {
-      void focusCard(id, '.kb-title-btn');
+      if (toCard) void refocusCard(id);
+      else void focusCard(id, '.kb-title-btn');
       onDialogClose?.(card);
     }
   }
@@ -1045,10 +1202,11 @@
       <section
         class="kb-column"
         class:aiming={!!line}
+        class:flash={flashing === column.status.id}
         data-kanban-column={column.status.id}
         aria-labelledby={`${uid}-${column.status.id}`}
       >
-        <header class="kb-column-head">
+        <header class="kb-column-head" data-keybind={keyboard ? columnKeybinds(column.status.id) : undefined}>
           <svelte:element this={`h${headingLevel}`} id={`${uid}-${column.status.id}`}>
             {column.status.label}
           </svelte:element>
@@ -1152,6 +1310,9 @@
               badges={cardBadges}
               {resolveImage}
               {previewNonce}
+              focusable={keyboard}
+              keybinds={keyboard ? CARD_KEYBINDS : undefined}
+              onEnter={preview || onCardClick ? () => openFromCard(entry) : undefined}
             />
           {/each}
 
@@ -1301,6 +1462,29 @@
 
   .kb-column.aiming {
     border-color: var(--color-primary);
+  }
+
+  /* A key asked for this column's first card and it has none. */
+  .kb-column.flash {
+    animation: kb-flash 0.7s ease-out;
+  }
+
+  @keyframes kb-flash {
+    0%,
+    40% {
+      border-color: var(--color-warning);
+      box-shadow: 0 0 0 3px var(--color-warning-soft);
+    }
+    100% {
+      box-shadow: 0 0 0 0 transparent;
+    }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .kb-column.flash {
+      animation: none;
+      border-color: var(--color-warning);
+    }
   }
 
   .kb-column-head {

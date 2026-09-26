@@ -8,18 +8,28 @@
    * schedule it in. `initialProject`/`initialVersion` preselect the project
    * and pre-check the version (the FAB passes the board context, D19).
    *
-   * Links are created with addTaskToVersion (lib/board/actions.ts), so the
-   * new card lands at the top of TODO on the board.
+   * Links are created with addTaskToVersion (lib/board/actions.ts) with the
+   * chosen status (TODO unless `initialStatus` says otherwise — the board's
+   * Ctrl+1/2/3, D26), so the new card lands at the top of that column.
    *
    * Test hooks: task-create-form, task-create-title, task-create-project,
-   * task-create-version-<versionId> (checkbox), task-create-version (inline
-   * "Create & link" button), task-create-submit, task-create-description and
-   * task-create-subtasks (MarkdownField prefixes).
+   * task-create-status, task-create-version-<versionId> (checkbox),
+   * task-create-version (inline "Create & link" button), task-create-submit,
+   * task-create-description and task-create-subtasks (MarkdownField prefixes).
    */
-  import { onMount } from 'svelte';
+  import { onMount, untrack } from 'svelte';
   import { all, getSingleton, put, withSyncFields } from '../../lib/db/repo';
   import { DEFAULT_PRIORITY, DEFAULT_TASK_TYPE, PRIORITY_VALUES } from '../../lib/db/types';
-  import type { Preferences, Project, SyncFields, Task, TaskType, TaskTypeKey, Version } from '../../lib/db/types';
+  import type {
+    Preferences,
+    Project,
+    StatusTypeKey,
+    SyncFields,
+    Task,
+    TaskType,
+    TaskTypeKey,
+    Version,
+  } from '../../lib/db/types';
   import { projectLabel } from '../../lib/crud';
   import { sortVersions } from '../../lib/versions';
   import { addTaskToVersion } from '../../lib/board/actions';
@@ -28,15 +38,25 @@
 
   type TaskValues = Omit<Task, keyof SyncFields>;
 
+  /** The board's three columns; a new link starts in one of them. */
+  const STATUSES: { key: StatusTypeKey; label: string }[] = [
+    { key: 'todo', label: 'TODO' },
+    { key: 'in_progress', label: 'In Progress' },
+    { key: 'done', label: 'Done' },
+  ];
+
   let {
     initialProject = null,
     initialVersion = null,
+    initialStatus = 'todo',
     onCreated = undefined,
     onCancel = undefined,
     autofocus = false,
   }: {
     initialProject?: string | null;
     initialVersion?: string | null;
+    /** The status of the links it creates (the column the card starts in). */
+    initialStatus?: StatusTypeKey;
     onCreated?: (task: Task) => void;
     onCancel?: () => void;
     /** Focus the title on mount (dialogs). */
@@ -50,6 +70,10 @@
   let defaultTaskType: TaskTypeKey = $state(DEFAULT_TASK_TYPE);
   let draft = $state(blankDraft());
   let linked: string[] = $state([]);
+  /** Starts from `initialStatus` once; the select owns it after that. */
+  let status: StatusTypeKey = $state(
+    untrack(() => (STATUSES.some((s) => s.key === initialStatus) ? initialStatus : 'todo'))
+  );
   let newProjectName = $state('');
   let newVersionNumber = $state('');
   let formError: string | null = $state(null);
@@ -153,7 +177,7 @@
     try {
       const created = await put('task', withSyncFields<TaskValues>(values));
       for (const versionId of linked) {
-        await addTaskToVersion(created.id, versionId);
+        await addTaskToVersion(created.id, versionId, status);
       }
       draft = blankDraft(draft.project);
       linked = [];
@@ -243,6 +267,14 @@
         {draft.project ? 'No version yet for this project — create one below.' : 'Select a project to schedule the task in its versions.'}
       </p>
     {/if}
+    <label class="status-pick">
+      <span>Starts in</span>
+      <select data-testid="task-create-status" bind:value={status}>
+        {#each STATUSES as opt (opt.key)}
+          <option value={opt.key}>{opt.label}</option>
+        {/each}
+      </select>
+    </label>
     <div class="link-list">
       {#each versionsForDraft as opt (opt.id)}
         <label class="check link-item">
@@ -343,5 +375,18 @@
 
   .link-item {
     margin: 0;
+  }
+
+  .status-pick {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-2);
+    margin: var(--space-1) 0 0;
+    font-size: var(--font-size-sm);
+  }
+
+  .status-pick select {
+    width: auto;
+    padding: var(--space-1) var(--space-2);
   }
 </style>

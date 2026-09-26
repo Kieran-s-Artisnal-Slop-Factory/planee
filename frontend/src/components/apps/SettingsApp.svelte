@@ -22,6 +22,18 @@
   } from '../../lib/sync';
   import { requestPersistentStorage, type PersistState } from '../../lib/db/persistence';
   import { href } from '../../lib/paths';
+  import {
+    TOOLS,
+    bindOf,
+    bindRefusal,
+    loadShortcuts,
+    onShortcutsChange,
+    resetShortcuts,
+    saveShortcuts,
+    shortcutLabel,
+    type Shortcuts,
+    type ToolId,
+  } from '../../lib/markdown/shortcuts';
 
   // retoken's scheme model (see Layout.astro): the key is shared with any
   // retoken or retemplate site on this origin on purpose.
@@ -179,6 +191,68 @@
     devPhraseInput = '';
   }
 
+  // ---- editor shortcuts (D22): the markdown editor's tool keys, per device.
+  // Ported from notey's SettingsPanel; the keys and their refusals live in
+  // lib/markdown/shortcuts.ts, which keeps them out of every app keybind
+  // (lib/ui/keymap.ts) and Ctrl/Cmd+S.
+  let shortcuts = $state<Shortcuts>(loadShortcuts());
+  /** The tool waiting for its next keypress, or null. */
+  let capturing = $state<ToolId | null>(null);
+  let shortcutNote = $state<string | null>(null);
+  let shortcutNoteOk = $state(true);
+
+  onMount(() => onShortcutsChange((next) => (shortcuts = next)));
+
+  const toolLabel = (tool: ToolId) => TOOLS.find((t) => t.id === tool)?.label ?? tool;
+
+  /**
+   * Take the next keypress as this tool's key. The listener is on the
+   * CAPTURE phase of the window, which keeps the keystroke from everything
+   * else while this is waiting: Alt+N would otherwise open New task, and
+   * Escape reach whatever else listens for it.
+   */
+  $effect(() => {
+    const tool = capturing;
+    if (!tool) return;
+    const onKey = (event: KeyboardEvent) => {
+      event.preventDefault();
+      event.stopPropagation();
+      if (event.key === 'Escape') {
+        capturing = null;
+        shortcutNote = null;
+        return;
+      }
+      const bind = bindOf(event);
+      // A modifier on its own is somebody still reaching for the key.
+      if (!bind) {
+        if (!['Control', 'Alt', 'Shift', 'Meta', 'AltGraph'].includes(event.key)) {
+          shortcutNote = bindRefusal('', tool, shortcuts);
+          shortcutNoteOk = false;
+        }
+        return;
+      }
+      const refusal = bindRefusal(bind, tool, shortcuts);
+      if (refusal) {
+        shortcutNote = refusal;
+        shortcutNoteOk = false;
+        return;
+      }
+      shortcuts = saveShortcuts({ ...shortcuts, [tool]: bind });
+      shortcutNote = `${toolLabel(tool)} opens with ${shortcutLabel(bind)}.`;
+      shortcutNoteOk = true;
+      capturing = null;
+    };
+    window.addEventListener('keydown', onKey, true);
+    return () => window.removeEventListener('keydown', onKey, true);
+  });
+
+  function resetEditorShortcuts() {
+    capturing = null;
+    shortcuts = resetShortcuts();
+    shortcutNote = 'Back to the default keys.';
+    shortcutNoteOk = true;
+  }
+
   async function clearData() {
     if (!confirm('Delete ALL local data? This cannot be undone — export a backup first if in doubt.')) {
       return;
@@ -269,6 +343,45 @@
           {value}
         </button>
       {/each}
+    </div>
+  </Card>
+
+  <Card title="Editor shortcuts">
+    <div class="stack" data-testid="editor-shortcuts">
+      <p class="muted small">
+        The keys that open the markdown editor's tools while you write. They are kept on this device
+        only, and can't take a key the app already uses (or <kbd>Ctrl</kbd>+<kbd>S</kbd>, which saves).
+      </p>
+      <div class="binds">
+        {#each TOOLS as tool (tool.id)}
+          <div class="bind">
+            <span class="bind-label"><span aria-hidden="true">{tool.glyph}</span> {tool.label}</span>
+            <kbd data-testid="shortcut-{tool.id}">{shortcuts[tool.id] ? shortcutLabel(shortcuts[tool.id]) : 'none'}</kbd>
+            <button
+              type="button"
+              class="btn btn-sm"
+              class:btn-primary={capturing === tool.id}
+              data-testid="shortcut-change-{tool.id}"
+              aria-label={`Change the key for ${tool.label}`}
+              onclick={() => {
+                shortcutNote = null;
+                capturing = capturing === tool.id ? null : tool.id;
+              }}
+            >
+              {capturing === tool.id ? 'Press keys…' : 'Change'}
+            </button>
+          </div>
+        {/each}
+      </div>
+      <div class="row">
+        <button type="button" class="btn btn-sm" data-testid="shortcuts-reset" onclick={resetEditorShortcuts}>
+          Reset to defaults
+        </button>
+        <span class="muted small">Escape stops waiting for a key.</span>
+      </div>
+      {#if shortcutNote}
+        <p class={shortcutNoteOk ? 'ok' : 'err'} role="status" data-testid="shortcut-note">{shortcutNote}</p>
+      {/if}
     </div>
   </Card>
 
@@ -385,6 +498,25 @@
     background: var(--color-warning-soft);
     border-radius: var(--radius-sm);
     font-size: var(--font-size-sm);
+  }
+
+  .binds {
+    display: grid;
+    grid-template-columns: max-content max-content max-content;
+    gap: var(--space-2) var(--space-3);
+    align-items: center;
+  }
+
+  .bind {
+    display: contents;
+  }
+
+  .bind-label {
+    font-weight: 600;
+  }
+
+  .bind kbd {
+    justify-self: start;
   }
 
   .modal-backdrop {

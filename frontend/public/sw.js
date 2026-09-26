@@ -23,7 +23,7 @@
 // Bump this on any meaningful change to this file: `activate` only purges
 // caches whose name differs, so a constant name makes that step dead code and
 // lets a previous deploy's (or a poisoned) entry survive forever.
-const CACHE_NAME = 'planee-cache-v6';
+const CACHE_NAME = 'planee-cache-v7';
 
 // Everything under this prefix belongs to this app. Cache Storage is keyed by
 // ORIGIN, not by service-worker scope, so if two of these apps are ever served
@@ -41,11 +41,16 @@ const BASE = new URL(self.registration.scope).pathname; // always ends with '/'
 const ASSET_PREFIX = BASE + '_astro/';
 const SHELL = ['', 'board/', 'project/', 'version/', 'task/', 'version_task/', 'asset/', 'preferences/', 'settings/', 'onboarding/', 'favicon.svg', 'manifest.webmanifest'].map((p) => BASE + p);
 
-// Self-hosted Excalidraw fonts (public/excalidraw/fonts, refreshed by
-// `npm run copy:excalidraw-fonts`). They live outside _astro/, so the crawl
-// below cannot discover them; they are seeded into it explicitly so drawings
-// render with the hand-drawn font offline. src/lib/sw.test.ts fails if this
-// list and the files on disk drift apart.
+// Self-hosted fonts and the stylesheets that name them, all outside _astro/,
+// so the crawl below cannot discover them; they are seeded into it explicitly
+// so drawings and formulas render offline:
+//  - Excalidraw's hand-drawn fonts (public/excalidraw/fonts, refreshed by
+//    `npm run copy:excalidraw-fonts`);
+//  - MathLive's stylesheets and the twenty KaTeX faces it draws with
+//    (public/math, `npm run copy:math-assets`, D21) — lib/math/fonts.ts links
+//    the stylesheets, and their url()s are relative, which the crawl does not
+//    follow either.
+// src/lib/sw.test.ts fails if this list and the files on disk drift apart.
 const FONT_ASSETS = [
   'excalidraw/fonts/Cascadia/CascadiaCode-Regular.woff2',
   'excalidraw/fonts/Excalifont/Excalifont-Regular-349fac6ca4700ffec595a7150a0d1e1d.woff2',
@@ -60,6 +65,28 @@ const FONT_ASSETS = [
   'excalidraw/fonts/Nunito/Nunito-Regular-XRXI3I6Li01BKofiOc5wtlZ2di8HDIkhdTk3j6zbXWjgevT5.woff2',
   'excalidraw/fonts/Nunito/Nunito-Regular-XRXI3I6Li01BKofiOc5wtlZ2di8HDIkhdTo3j6zbXWjgevT5.woff2',
   'excalidraw/fonts/Nunito/Nunito-Regular-XRXI3I6Li01BKofiOc5wtlZ2di8HDIkhdTs3j6zbXWjgevT5.woff2',
+  'math/mathlive-fonts.css',
+  'math/mathlive-static.css',
+  'math/fonts/KaTeX_AMS-Regular.woff2',
+  'math/fonts/KaTeX_Caligraphic-Bold.woff2',
+  'math/fonts/KaTeX_Caligraphic-Regular.woff2',
+  'math/fonts/KaTeX_Fraktur-Bold.woff2',
+  'math/fonts/KaTeX_Fraktur-Regular.woff2',
+  'math/fonts/KaTeX_Main-Bold.woff2',
+  'math/fonts/KaTeX_Main-BoldItalic.woff2',
+  'math/fonts/KaTeX_Main-Italic.woff2',
+  'math/fonts/KaTeX_Main-Regular.woff2',
+  'math/fonts/KaTeX_Math-BoldItalic.woff2',
+  'math/fonts/KaTeX_Math-Italic.woff2',
+  'math/fonts/KaTeX_SansSerif-Bold.woff2',
+  'math/fonts/KaTeX_SansSerif-Italic.woff2',
+  'math/fonts/KaTeX_SansSerif-Regular.woff2',
+  'math/fonts/KaTeX_Script-Regular.woff2',
+  'math/fonts/KaTeX_Size1-Regular.woff2',
+  'math/fonts/KaTeX_Size2-Regular.woff2',
+  'math/fonts/KaTeX_Size3-Regular.woff2',
+  'math/fonts/KaTeX_Size4-Regular.woff2',
+  'math/fonts/KaTeX_Typewriter-Regular.woff2',
 ].map((p) => BASE + p);
 
 // Servers often send `Vary: Origin`, and module import() requests carry an
@@ -75,8 +102,11 @@ const NAV_OPTS = { ignoreVary: true, ignoreSearch: true };
 // crawl will pull, so a large bundle can't hammer the host.
 const WARM_DELAY_MS = 120;
 // Sized from the measured production build (board + markdown editor): a full
-// crawl is 259 fetches (12 shell pages/files, 13 Excalidraw fonts, 234 _astro
-// files), +25% headroom. tests/sync/sw-crawl.spec.ts replays this crawl
+// crawl was 259 fetches (12 shell pages/files, 13 Excalidraw fonts, 234 _astro
+// files), +25% headroom. With notey's editor (10c-E) it measured 276: the 22
+// seeded math files arrived, KaTeX's 19 bundled fonts left (MathLive draws
+// every formula now), so 12 + 35 seeded + 229 _astro — still ~17% under the
+// cap, so it stays. tests/sync/sw-crawl.spec.ts replays this crawl
 // against the built dist/ and fails when the bundle outgrows the cap or a
 // file becomes unreachable — raise it there, deliberately, not by guesswork.
 const WARM_MAX_ASSETS = 324;

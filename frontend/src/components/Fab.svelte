@@ -8,6 +8,13 @@
    * the last board selection). The command palette opens the same dialogs
    * through `openCreate` (commands.ts OPEN_CREATE_EVENT).
    *
+   * Keys (lib/ui/keybinds.ts, registered here so a page without the FAB —
+   * onboarding — has no create keys): Ctrl+Enter opens the menu with its first
+   * item focused (also `openFab()`, OPEN_FAB_EVENT); Ctrl+N / Alt+N, Ctrl+Shift+P
+   * / Alt+Shift+P and Ctrl+Shift+V open New Task / Project / Version.
+   * `openCreate(kind, prefill)` may carry the board's own project, version and
+   * a New Task status (Ctrl+1/2/3, D26) instead of the board context.
+   *
    * After creating: a project or version navigates to its board; a task shows
    * a toast with an Open link (the board, if showing that version, already
    * updated through the change feed).
@@ -30,7 +37,15 @@
    */
   import { onMount, tick } from 'svelte';
   import type { Project, Task, Version } from '../lib/db/types';
-  import { OPEN_CREATE_EVENT, type CreateKind, type OpenCreateDetail } from '../lib/ui/commands';
+  import type { StatusTypeKey } from '../lib/db/types';
+  import {
+    OPEN_CREATE_EVENT,
+    OPEN_FAB_EVENT,
+    type CreateKind,
+    type CreatePrefill,
+    type OpenCreateDetail,
+  } from '../lib/ui/commands';
+  import { registerKeyHandlers } from '../lib/ui/keybinds';
   import { currentBoardContext, projectHref, resolveTaskHref, versionHref } from '../lib/ui/links';
   import ProjectCreateForm from './forms/ProjectCreateForm.svelte';
   import VersionCreateForm from './forms/VersionCreateForm.svelte';
@@ -50,7 +65,11 @@
   let kind: CreateKind | null = $state(null);
   /** Re-keys the form so every open starts from a clean draft. */
   let openCount = $state(0);
-  let context = $state<{ project: string | null; version: string | null }>({ project: null, version: null });
+  let context = $state<{ project: string | null; version: string | null; status: StatusTypeKey }>({
+    project: null,
+    version: null,
+    status: 'todo',
+  });
   let toast = $state<{ title: string; href: string } | null>(null);
   let toastTimer: ReturnType<typeof setTimeout> | undefined;
 
@@ -68,19 +87,34 @@
     }
   }
 
+  /** Open the menu (or bring focus back into it) with its first item focused. */
+  async function openMenu() {
+    if (kind) return;
+    menuOpen = true;
+    await tick();
+    menuEl?.querySelector<HTMLButtonElement>('button')?.focus();
+  }
+
   function closeMenu(focusFab = false) {
     menuOpen = false;
     if (focusFab) fabEl?.focus();
   }
 
-  function open(next: CreateKind) {
+  function open(next: CreateKind, prefill?: CreatePrefill) {
     if (kind && isMarkdownEditing(dialogEl) && !confirm('Discard the form you have open?')) return;
     if (!kind) {
       const active = document.activeElement;
-      returnFocus = active instanceof HTMLElement && active !== document.body ? active : fabEl;
+      // Not a menu item: the menu is about to close, taking it with it.
+      returnFocus =
+        active instanceof HTMLElement && active !== document.body && !menuEl?.contains(active) ? active : fabEl;
     }
     menuOpen = false;
-    context = currentBoardContext();
+    // The board's own project/version when it passed them (Ctrl+1/2/3), else the board context.
+    const board =
+      prefill?.project !== undefined
+        ? { project: prefill.project ?? null, version: prefill.version ?? null }
+        : currentBoardContext();
+    context = { ...board, status: prefill?.status ?? 'todo' };
     kind = next;
     openCount++;
   }
@@ -162,11 +196,23 @@
   onMount(() => {
     const onOpen = (event: Event) => {
       const detail = (event as CustomEvent<OpenCreateDetail>).detail;
-      if (detail && (detail.kind === 'task' || detail.kind === 'version' || detail.kind === 'project')) open(detail.kind);
+      if (detail && (detail.kind === 'task' || detail.kind === 'version' || detail.kind === 'project')) {
+        open(detail.kind, detail.prefill);
+      }
     };
+    const onOpenFab = () => void openMenu();
     window.addEventListener(OPEN_CREATE_EVENT, onOpen);
+    window.addEventListener(OPEN_FAB_EVENT, onOpenFab);
+    const unregister = registerKeyHandlers('global', {
+      'fab.open': () => void openMenu(),
+      'create.task': () => open('task'),
+      'create.project': () => open('project'),
+      'create.version': () => open('version'),
+    });
     return () => {
       window.removeEventListener(OPEN_CREATE_EVENT, onOpen);
+      window.removeEventListener(OPEN_FAB_EVENT, onOpenFab);
+      unregister();
       clearTimeout(toastTimer);
     };
   });
@@ -204,7 +250,13 @@
       onkeydown={onMenuKey}
     >
       {#each ITEMS as item (item.kind)}
-        <button type="button" role="menuitem" data-testid="fab-new-{item.kind}" onclick={() => open(item.kind)}>
+        <button
+          type="button"
+          role="menuitem"
+          data-testid="fab-new-{item.kind}"
+          data-keybind="create.{item.kind}@beside"
+          onclick={() => open(item.kind)}
+        >
           <span class="icon" aria-hidden="true">{item.icon}</span>
           {item.label}
         </button>
@@ -217,6 +269,7 @@
     class="fab"
     class:open={menuOpen}
     data-testid="fab"
+    data-keybind="fab.open@beside"
     aria-label="Create…"
     title="Create a task, version or project"
     aria-haspopup="menu"
@@ -267,6 +320,7 @@
               autofocus
               initialProject={context.project}
               initialVersion={context.version}
+              initialStatus={context.status}
               onCreated={taskCreated}
               onCancel={requestClose}
             />

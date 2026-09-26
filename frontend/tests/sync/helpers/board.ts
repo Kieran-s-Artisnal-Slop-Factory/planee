@@ -441,3 +441,25 @@ export function assertDragWhileRenaming({ before, legs }: ConcurrentRun): void {
   ]);
   assertInvariantsEverywhere(legs);
 }
+
+// ---------------------------------------------------------------------------
+// Keybinds (keybinds-ui.spec.ts, D23–D28)
+// ---------------------------------------------------------------------------
+
+/** The data-id of the card that has keyboard focus (the card itself, not a control in it), or null. */
+export const focusedCardId = (page: Page): Promise<string | null> =>
+  page.evaluate(() => {
+    const el = document.activeElement;
+    return el instanceof HTMLElement && el.matches('[data-kanban-card]') ? el.getAttribute('data-id') : null;
+  });
+
+/** Poll until the focused card is `linkId` (a moved card is re-rendered, then re-focused). */
+export async function expectFocusedCard(page: Page, linkId: string | null): Promise<void> {
+  await expect.poll(() => focusedCardId(page), { message: 'focused card' }).toBe(linkId);
+}
+
+/** Hold Ctrl on its own long enough for the keybind overlay (D28: ~0.4 s). Release with keyboard.up('Control'). */
+export async function holdCtrl(page: Page, ms = 650): Promise<void> {
+  await page.keyboard.down('Control');
+  await page.waitForTimeout(ms);
+}

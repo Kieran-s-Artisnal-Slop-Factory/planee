@@ -12,21 +12,45 @@
    *   backdrop click closes. Hovering highlights.
    * - Actions close the palette and `openCreate` (the FAB's dialogs); tasks go
    *   to `resolveTaskHref`, projects and versions to their board, pages to
-   *   their path.
+   *   their path. Each action row shows its keybind (lib/ui/keymap.ts): the
+   *   browser-safe fallback (Alt+N…) unless planee runs as an installed app.
+   * - While a markdown editor is open (lib/ui/commands.ts
+   *   `canOpenEditorTool`), an Editor group offers its four tools — "Insert a
+   *   formula / diagram / drawing / footnote" — each with this device's key
+   *   (lib/markdown/shortcuts.ts). Activating one closes the palette, hands
+   *   focus back, and `openEditorTool` opens it in the most recently focused
+   *   editor. (10c-E, D22)
    *
    * z-index 90: above the FAB's create dialog (75) and the card dialog (70).
    *
    * Test hooks: palette (the dialog), palette-input, palette-results,
    * palette-item (data-kind, data-id, aria-selected on the highlight),
-   * palette-empty.
+   * palette-item-keys (the chord hint), palette-empty.
    */
   import { onMount, tick } from 'svelte';
   import { href } from '../lib/paths';
   import type { Project, Task, Version } from '../lib/db/types';
-  import { OPEN_PALETTE_EVENT, openCreate, type CreateKind } from '../lib/ui/commands';
+  import {
+    OPEN_PALETTE_EVENT,
+    canOpenEditorTool,
+    openCreate,
+    openEditorTool,
+    type CreateKind,
+    type EditorToolId,
+  } from '../lib/ui/commands';
+  import { chordLabel, isInstalledApp } from '../lib/ui/keys';
+  import { keybind } from '../lib/ui/keymap';
+  import { TOOLS, loadShortcuts, shortcutLabel } from '../lib/markdown/shortcuts';
   import { projectHref, resolveTaskHref, versionHref } from '../lib/ui/links';
   import { recentViews } from '../lib/ui/recent';
-  import { buildPalette, flatten, moveHighlight, type PaletteData, type PaletteItem } from '../lib/ui/palette';
+  import {
+    buildPalette,
+    flatten,
+    moveHighlight,
+    type PaletteData,
+    type PaletteItem,
+    type PaletteTool,
+  } from '../lib/ui/palette';
 
   let {
     /** Offer the create actions (false where there is no FAB to fulfil them, e.g. onboarding). */
@@ -49,8 +73,47 @@
   /** Guards a load that finishes after the palette was closed (and maybe reopened). */
   let loadToken = 0;
 
+  /** The editor's tools, when an editor is open to receive them (read on open). */
+  let tools = $state.raw<PaletteTool[]>([]);
+  /** Each create action's chord, as shown (read on open). */
+  let actionKeys = $state.raw<Partial<Record<CreateKind, string>>>({});
+
+  const ACTION_KEYBINDS: Record<CreateKind, string> = {
+    task: 'create.task',
+    version: 'create.version',
+    project: 'create.project',
+  };
+
+  /** The chord to show for an action: the fallback in a browser tab, the primary in an installed app. */
+  function actionChords(): Partial<Record<CreateKind, string>> {
+    const installed = isInstalledApp();
+    const out: Partial<Record<CreateKind, string>> = {};
+    for (const [kind, id] of Object.entries(ACTION_KEYBINDS) as [CreateKind, string][]) {
+      try {
+        const bind = keybind(id);
+        const chord = installed ? bind.keys[0] : (bind.fallback ?? bind.keys[0]);
+        if (chord) out[kind] = chordLabel(chord);
+      } catch {
+        // Not in the keymap (yet): no hint.
+      }
+    }
+    return out;
+  }
+
+  function editorTools(): PaletteTool[] {
+    if (!canOpenEditorTool()) return [];
+    const keys = loadShortcuts();
+    return TOOLS.map((tool) => ({
+      id: tool.id,
+      label: tool.command,
+      hint: tool.hint,
+      keys: shortcutLabel(keys[tool.id]) || undefined,
+      icon: tool.glyph,
+    }));
+  }
+
   const groups = $derived(
-    buildPalette(query, data).map((g) =>
+    buildPalette(query, { ...data, tools, actionKeys }).map((g) =>
       g.name === 'Actions' && !actions ? { ...g, items: [] } : g
     ).filter((g) => g.items.length > 0)
   );
@@ -107,6 +170,8 @@
     query = '';
     highlight = 0;
     busy = false;
+    tools = editorTools();
+    actionKeys = actionChords();
     isOpen = true;
     void load();
     await tick();
@@ -118,6 +183,7 @@
     isOpen = false;
     loadToken++;
     data = EMPTY;
+    tools = [];
     loading = false;
     const target = returnFocus;
     returnFocus = null;
@@ -130,6 +196,12 @@
       case 'action':
         close({ restoreFocus: false });
         openCreate(item.id as CreateKind);
+        return;
+      case 'tool':
+        // Focus goes back to the editor first: the tool dialog remembers
+        // where it came from and returns there when it closes.
+        close();
+        openEditorTool(item.id as EditorToolId);
         return;
       case 'page':
         close({ restoreFocus: false });
@@ -204,6 +276,7 @@
 
   const KIND_ICON: Record<PaletteItem['kind'], string> = {
     action: '+',
+    tool: '✎',
     task: '☐',
     project: '▦',
     version: '⑂',
@@ -271,9 +344,10 @@
                 onclick={() => void activate(item)}
                 onkeydown={() => {}}
               >
-                <span class="kind" aria-hidden="true">{KIND_ICON[item.kind]}</span>
+                <span class="kind" aria-hidden="true">{item.icon ?? KIND_ICON[item.kind]}</span>
                 <span class="label">{item.label}</span>
                 {#if item.hint}<span class="hint-text">{item.hint}</span>{/if}
+                {#if item.keys}<kbd class="item-keys" data-testid="palette-item-keys">{item.keys}</kbd>{/if}
               </div>
             {/each}
           </div>
@@ -397,6 +471,13 @@
     white-space: nowrap;
     font-size: var(--font-size-sm);
     color: var(--text-muted-color);
+  }
+
+  .item-keys {
+    flex: none;
+    font-size: 0.8em;
+    font-weight: 400;
+    opacity: 0.8;
   }
 
   .empty {

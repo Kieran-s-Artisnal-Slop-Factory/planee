@@ -11,11 +11,17 @@ import { BACKEND_DIR, BIN_DIR, DIST_DIR, FRONTEND_DIR, binName } from './helpers
  * code path no user ever runs — which is how "all green" and "sync is broken"
  * coexist.
  *
- * Set PLANEE_SKIP_BUILD=1 to reuse the last build while iterating.
+ * Set PLANEE_SKIP_BUILD=1 to reuse the last build while iterating, and
+ * PLANEE_DIST_DIR / PLANEE_BIN_DIR to build somewhere other than dist/ and
+ * tests/sync/.bin/ (helpers/paths.ts) so parallel runs don't collide.
  */
 export default async function globalSetup(): Promise<void> {
   if (process.env.PLANEE_SKIP_BUILD === '1' && existsSync(DIST_DIR)) return;
-  execFileSync('npm', ['run', 'build'], { cwd: FRONTEND_DIR, stdio: 'inherit', shell: true });
+  execFileSync('npm', ['run', 'build', '--', '--outDir', JSON.stringify(DIST_DIR)], {
+    cwd: FRONTEND_DIR,
+    stdio: 'inherit',
+    shell: true,
+  });
   execFileSync('go', ['build', '-o', binName(BIN_DIR, 'server'), '.'], {
     cwd: BACKEND_DIR,
     stdio: 'inherit',

@@ -96,10 +96,14 @@ export function reopenVersion(versionId: string): Promise<Version> {
   return mustPatch<Version>('version', versionId, { completed: false }, 'version');
 }
 
+/** Change a version's notes and/or number: only the fields given are written (the Edit version modal passes changed ones only). */
 export function patchVersion(
   versionId: string,
   changes: Partial<Pick<Version, 'description' | 'number'>>
 ): Promise<Version> {
+  if ('number' in changes && !String(changes.number ?? '').trim()) {
+    return Promise.reject(new Error('A version needs a number.'));
+  }
   return mustPatch<Version>('version', versionId, changes, 'version');
 }
 
@@ -158,15 +162,23 @@ export async function deleteCard(linkId: string): Promise<void> {
   if (plan.deleteTask && plan.taskId) await softDelete('task', plan.taskId);
 }
 
-/** Schedule an unscheduled task in a version, at the top of TODO. */
-export async function addTaskToVersion(taskId: string, versionId: string): Promise<VersionTask> {
+/**
+ * Schedule a task in a version, at the top of `status`'s column (TODO unless
+ * told otherwise — the board's Ctrl+2/3 create straight into In Progress or
+ * Done, D26). A task already scheduled there keeps its link as it is.
+ */
+export async function addTaskToVersion(
+  taskId: string,
+  versionId: string,
+  status: StatusTypeKey = 'todo'
+): Promise<VersionTask> {
   await mustGet<Task>('task', taskId, 'task');
   const links = await byIndex<VersionTask>('version_task', 'version', versionId);
   const existing = links.find((l) => l.task === taskId);
   if (existing) return existing;
   return put<VersionTask>(
     'version_task',
-    withSyncFields({ version: versionId, task: taskId, status: 'todo' as const, position: topPosition(links, 'todo') })
+    withSyncFields({ version: versionId, task: taskId, status, position: topPosition(links, status) })
   );
 }
 
