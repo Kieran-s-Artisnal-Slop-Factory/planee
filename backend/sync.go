@@ -81,7 +81,8 @@ var tables = map[string]tableMeta{
 		columns: cols("id", "name", "mime", "size", "data"),
 	},
 	"preferences": {
-		columns:    cols("id", "default_task_type", "recent_issues_count"),
+		columns:    cols("id", "default_task_type", "recent_issues_count", "show_keybind_sheet"),
+		boolCols:   set("show_keybind_sheet"),
 		fieldMerge: true,
 	},
 }

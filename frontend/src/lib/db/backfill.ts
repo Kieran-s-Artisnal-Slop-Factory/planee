@@ -85,3 +85,33 @@ export function backfillV4(
 export const V4_DEFAULTS: Record<string, Record<string, unknown>> = {
   preferences: { recent_issues_count: 6 },
 };
+
+/**
+ * Schema v5 (server migration v4 in backend/db.go): preferences gains
+ * show_keybind_sheet, DEFAULT 1 — `true` on the wire and here.
+ *
+ * Same contract as backfillV4: absent fields only, updated_at untouched, no
+ * stamp added. The `true` is spelled out rather than read from
+ * DEFAULT_SHOW_KEYBIND_SHEET so this step stays what it was when it shipped.
+ */
+export function backfillV5(
+  store: string,
+  row: Record<string, unknown>
+): Record<string, unknown> | null {
+  const defaults = V5_DEFAULTS[store];
+  if (!defaults) return null;
+  const next: Record<string, unknown> = { ...row };
+  let changed = false;
+  for (const [field, value] of Object.entries(defaults)) {
+    if (!(field in next)) {
+      next[field] = value;
+      changed = true;
+    }
+  }
+  return changed ? next : null;
+}
+
+/** The stores backfillV5 touches, and what it fills in. */
+export const V5_DEFAULTS: Record<string, Record<string, unknown>> = {
+  preferences: { show_keybind_sheet: true },
+};

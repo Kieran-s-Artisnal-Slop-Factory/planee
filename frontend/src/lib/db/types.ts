@@ -65,10 +65,14 @@ export interface TaskType extends SyncFields {
 export interface Preferences extends SyncFields {
   default_task_type: TaskTypeKey; // FK -> task_type.id
   recent_issues_count: number; // how many recent issues Home lists
+  show_keybind_sheet: boolean; // holding Ctrl shows the shortcut cheat sheet (the badges show regardless)
 }
 
 /** Default for Preferences.recent_issues_count (and the DDL default). */
 export const DEFAULT_RECENT_ISSUES_COUNT = 6;
+
+/** Default for Preferences.show_keybind_sheet (and the DDL default). */
+export const DEFAULT_SHOW_KEYBIND_SHEET = true;
 
 /** Enum row — one of STATUS_TYPE_VALUES; `id` is the value key. */
 export interface StatusType extends SyncFields {

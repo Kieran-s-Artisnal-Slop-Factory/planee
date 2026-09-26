@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { backfillV3, backfillV4 } from './backfill';
+import { backfillV3, backfillV4, backfillV5 } from './backfill';
 
 const sync = {
   updated_at: '2026-01-01T00:00:00.000Z',
@@ -112,5 +112,38 @@ describe('backfillV4', () => {
     const v2 = { id: 'singleton', default_task_type: 'cleanup', field_updated_at: {}, ...sync };
     const afterV3 = backfillV3('preferences', v2) ?? v2;
     expect(backfillV4('preferences', afterV3)).toEqual({ ...v2, recent_issues_count: 6 });
+  });
+});
+
+describe('backfillV5', () => {
+  const stamps = { recent_issues_count: '2026-01-01T00:00:00.000Z', deleted_at: '2026-01-01T00:00:00.000Z' };
+
+  it('turns the cheat sheet on (the server DEFAULT), leaving the count, sync fields and stamps alone', () => {
+    const row = { id: 'singleton', default_task_type: 'bug', recent_issues_count: 3, field_updated_at: stamps, ...sync };
+    expect(backfillV5('preferences', row)).toEqual({ ...row, show_keybind_sheet: true });
+    expect(row).not.toHaveProperty('show_keybind_sheet');
+  });
+
+  it('upgrades a tombstone too', () => {
+    const row = { id: 'singleton', default_task_type: 'bug', ...sync, deleted_at: '2026-02-01T00:00:00.000Z' };
+    expect(backfillV5('preferences', row)).toMatchObject({ show_keybind_sheet: true, deleted_at: row.deleted_at });
+  });
+
+  it('never overwrites a present value, including false', () => {
+    expect(backfillV5('preferences', { id: 'singleton', show_keybind_sheet: false, ...sync })).toBeNull();
+    expect(backfillV5('preferences', { id: 'singleton', show_keybind_sheet: true, ...sync })).toBeNull();
+  });
+
+  it('ignores stores it does not upgrade', () => {
+    for (const store of ['project', 'version', 'task', 'version_task', 'asset']) {
+      expect(backfillV5(store, { id: 'x', ...sync })).toBeNull();
+    }
+  });
+
+  it('chains after backfillV3 and backfillV4 the way an old backup is imported', () => {
+    const v2 = { id: 'singleton', default_task_type: 'cleanup', field_updated_at: {}, ...sync };
+    const afterV3 = backfillV3('preferences', v2) ?? v2;
+    const afterV4 = backfillV4('preferences', afterV3) ?? afterV3;
+    expect(backfillV5('preferences', afterV4)).toEqual({ ...v2, recent_issues_count: 6, show_keybind_sheet: true });
   });
 });

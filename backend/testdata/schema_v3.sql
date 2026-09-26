@@ -1,3 +1,10 @@
+-- FROZEN FIXTURE: schema v3, exactly as backend/sql/schema.sql shipped from
+-- a880c09 (Checkpoint 4b) through 3f0be1a (the 0.1.0 merge). db_test.go builds
+-- a v3 database from it — the shape a server CREATED by a v3 build has, as
+-- opposed to one migrated there — to prove the migrations after v3 reach the
+-- same columns as a fresh database.
+-- Never edit this file; add a new fixture for a new baseline instead.
+--
 -- planee schema — canonical data model.
 --
 -- This DDL is the single source of truth, and it is the FULL, CURRENT schema:
@@ -146,7 +153,6 @@ CREATE TABLE preferences (
     id                   TEXT PRIMARY KEY,
     default_task_type    TEXT NOT NULL REFERENCES task_type (id),
     recent_issues_count  INTEGER NOT NULL DEFAULT 6,  -- how many recent issues Home lists
-    show_keybind_sheet   INTEGER NOT NULL DEFAULT 1,  -- bool: holding Ctrl shows the shortcut cheat sheet
     updated_at           TEXT NOT NULL,
     deleted_at           TEXT,
     server_seq           INTEGER,

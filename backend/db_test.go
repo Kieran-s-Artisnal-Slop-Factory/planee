@@ -122,6 +122,15 @@ var schemaV2SQL string
 // v2Epoch is the sync identity of the v2 fixture database.
 const v2Epoch = "fedcba9876543210fedcba9876543210"
 
+// schemaV3SQL is the schema as the v3 build (0.1.0 through Checkpoint 4c)
+// shipped it. Frozen: a server created by that build looks like this.
+//
+//go:embed testdata/schema_v3.sql
+var schemaV3SQL string
+
+// v3Epoch is the sync identity of the v3 fixture database.
+const v3Epoch = "33333333333333333333333333333333"
+
 // createFixtureDB builds a database file from the given statements and returns
 // its path. The statements must include the schema, serverDDL, sync_state and
 // the PRAGMA user_version the old build left.
@@ -181,6 +190,26 @@ func createV2DB(t *testing.T) string {
 		 VALUES ('singleton', 'cleanup', '2026-02-01T00:00:02.000Z', '2026-02-02T00:00:00.000Z', 3,
 		         '{"default_task_type":"2026-02-01T00:00:02.000Z","deleted_at":"2026-02-02T00:00:00.000Z"}')`,
 		"PRAGMA user_version = 2",
+	})
+}
+
+// createV3DB writes a database as a v3 build CREATED it (schema_v3.sql applied
+// fresh, user_version 3) holding a task and a preferences row with a
+// non-default count, and returns its path.
+func createV3DB(t *testing.T) string {
+	t.Helper()
+	return createFixtureDB(t, "v3", []string{
+		schemaV3SQL,
+		serverDDL,
+		"INSERT INTO sync_state (id, last_seq, epoch) VALUES (1, 3, '" + v3Epoch + "')",
+		`INSERT INTO project (id, name, description, updated_at, deleted_at, server_seq, field_updated_at)
+		 VALUES ('p1', 'Planee', '', '2026-03-01T00:00:00.000Z', NULL, 1, '{}')`,
+		`INSERT INTO task (id, project, title, task_type, description, priority, subtasks, updated_at, deleted_at, server_seq, field_updated_at)
+		 VALUES ('t1', 'p1', 'Hide the cheat sheet', 'feature', NULL, 4, NULL, '2026-03-01T00:00:02.000Z', NULL, 3, '{}')`,
+		`INSERT INTO preferences (id, default_task_type, recent_issues_count, updated_at, deleted_at, server_seq, field_updated_at)
+		 VALUES ('singleton', 'exploration', 3, '2026-03-01T00:00:01.000Z', NULL, 2,
+		         '{"default_task_type":"2026-03-01T00:00:01.000Z","recent_issues_count":"2026-03-01T00:00:01.000Z","deleted_at":"2026-03-01T00:00:01.000Z"}')`,
+		"PRAGMA user_version = 3",
 	})
 }
 
@@ -302,7 +331,7 @@ var knownMigrationDifferences = map[string][2]string{
 	},
 }
 
-// v2KnownDifferences: a database created by a v2 build has none.
+// v2KnownDifferences: a database created by a v2 (or later) build has none.
 var v2KnownDifferences = map[string][2]string{}
 
 func TestMigrateV1MatchesFresh(t *testing.T) {
@@ -311,6 +340,10 @@ func TestMigrateV1MatchesFresh(t *testing.T) {
 
 func TestMigrateV2MatchesFresh(t *testing.T) {
 	assertMigratedMatchesFresh(t, createV2DB(t), v2Epoch, v2KnownDifferences)
+}
+
+func TestMigrateV3MatchesFresh(t *testing.T) {
+	assertMigratedMatchesFresh(t, createV3DB(t), v3Epoch, v2KnownDifferences)
 }
 
 // assertMigratedMatchesFresh opens the old database at path (running every
@@ -418,10 +451,11 @@ func TestMigrateV1BackfillsExistingRows(t *testing.T) {
 			"updated_at": "2026-01-01T00:00:03.000Z", "deleted_at": "2026-01-02T00:00:00.000Z",
 			"server_seq": int64(4), "field_updated_at": map[string]any{},
 		},
-		// migrateV3 (IndexedDB v4 backfillV4): recent_issues_count 6, and the
+		// migrateV3 (IndexedDB v4 backfillV4): recent_issues_count 6;
+		// migrateV4 (IndexedDB v5 backfillV5): show_keybind_sheet true; and the
 		// stamp map left exactly as it was.
 		"preferences": {
-			"id": "singleton", "default_task_type": "bug", "recent_issues_count": int64(6),
+			"id": "singleton", "default_task_type": "bug", "recent_issues_count": int64(6), "show_keybind_sheet": true,
 			"updated_at": "2026-01-01T00:00:04.000Z", "deleted_at": nil, "server_seq": int64(5),
 			"field_updated_at": map[string]any{
 				"default_task_type": "2026-01-01T00:00:04.000Z", "deleted_at": "2026-01-01T00:00:04.000Z",
@@ -463,7 +497,7 @@ func TestMigrateV2BackfillsExistingRows(t *testing.T) {
 
 	// A tombstoned preferences row upgrades too; its stamps stay as they were.
 	want := map[string]any{
-		"id": "singleton", "default_task_type": "cleanup", "recent_issues_count": int64(6),
+		"id": "singleton", "default_task_type": "cleanup", "recent_issues_count": int64(6), "show_keybind_sheet": true,
 		"updated_at": "2026-02-01T00:00:02.000Z", "deleted_at": "2026-02-02T00:00:00.000Z", "server_seq": int64(3),
 		"field_updated_at": map[string]any{
 			"default_task_type": "2026-02-01T00:00:02.000Z", "deleted_at": "2026-02-02T00:00:00.000Z",
@@ -477,7 +511,7 @@ func TestMigrateV2BackfillsExistingRows(t *testing.T) {
 		t.Errorf("preferences after migration:\n got:  %#v\n want: %#v", got, want)
 	}
 
-	// Rows in other tables are untouched by migrateV3.
+	// Rows in other tables are untouched by migrateV3 and migrateV4.
 	task, err := readRow(db, "task", tables["task"], "t1")
 	if err != nil {
 		t.Fatal(err)
@@ -501,8 +535,44 @@ func TestMigrateV2BackfillsExistingRows(t *testing.T) {
 	}
 }
 
+func TestMigrateV3BackfillsExistingRows(t *testing.T) {
+	path := createV3DB(t)
+	db, _, err := openDB(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	// The cheat sheet is on, as it was before the column existed; the count
+	// someone chose and every stamp stay as they were.
+	want := map[string]any{
+		"id": "singleton", "default_task_type": "exploration", "recent_issues_count": int64(3), "show_keybind_sheet": true,
+		"updated_at": "2026-03-01T00:00:01.000Z", "deleted_at": nil, "server_seq": int64(2),
+		"field_updated_at": map[string]any{
+			"default_task_type":   "2026-03-01T00:00:01.000Z",
+			"recent_issues_count": "2026-03-01T00:00:01.000Z",
+			"deleted_at":          "2026-03-01T00:00:01.000Z",
+		},
+	}
+	got, err := readRow(db, "preferences", tables["preferences"], "singleton")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("preferences after migration:\n got:  %#v\n want: %#v", got, want)
+	}
+
+	var lastSeq int64
+	if err := db.QueryRow("SELECT last_seq FROM sync_state WHERE id = 1").Scan(&lastSeq); err != nil {
+		t.Fatal(err)
+	}
+	if lastSeq != 3 {
+		t.Errorf("last_seq = %d after migration, want 3 (a migration must not touch the sync counter)", lastSeq)
+	}
+}
+
 func TestMigrateReopenIsNoOp(t *testing.T) {
-	for name, create := range map[string]func(*testing.T) string{"v1": createV1DB, "v2": createV2DB} {
+	for name, create := range map[string]func(*testing.T) string{"v1": createV1DB, "v2": createV2DB, "v3": createV3DB} {
 		t.Run(name, func(t *testing.T) {
 			path := create(t)
 			db, epoch, err := openDB(path)
@@ -519,7 +589,7 @@ func TestMigrateReopenIsNoOp(t *testing.T) {
 			db.Close()
 
 			// A second start must not re-run anything. migrateV2's DROP COLUMN
-			// and migrateV3's ADD COLUMN would fail outright if it did, so an
+			// and the later ADD COLUMNs would fail outright if it did, so an
 			// error here is the loud version of this.
 			db2, epoch2, err := openDB(path)
 			if err != nil {
@@ -625,6 +695,36 @@ func TestFailedMigrationV3RollsBack(t *testing.T) {
 		t.Fatalf("user_version = %d after a failed migration, want 2", got)
 	}
 	if _, err := db.Exec("SELECT recent_issues_count FROM preferences"); err == nil {
+		t.Fatal("the failed migration's ADD COLUMN was not rolled back")
+	}
+}
+
+// And v3 -> v4: a failure leaves a v3 database at v3.
+func TestFailedMigrationV4RollsBack(t *testing.T) {
+	path := createV3DB(t)
+	saved := migrations
+	t.Cleanup(func() { migrations = saved })
+	migrations = []func(*sql.Tx) error{migrateV2, migrateV3, func(tx *sql.Tx) error {
+		if err := migrateV4(tx); err != nil {
+			return err
+		}
+		return fmt.Errorf("simulated failure after the DDL ran")
+	}}
+
+	if db, _, err := openDB(path); err == nil {
+		db.Close()
+		t.Fatal("openDB succeeded despite a failing migration")
+	}
+
+	db, err := sql.Open("sqlite", "file:"+path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	if got := userVersion(t, db); got != 3 {
+		t.Fatalf("user_version = %d after a failed migration, want 3", got)
+	}
+	if _, err := db.Exec("SELECT show_keybind_sheet FROM preferences"); err == nil {
 		t.Fatal("the failed migration's ADD COLUMN was not rolled back")
 	}
 }

@@ -73,7 +73,7 @@ func TestPushPullNewColumnTypesRoundTrip(t *testing.T) {
 			"updated_at": at, "deleted_at": nil,
 		}},
 		"preferences": {{
-			"id": "singleton", "default_task_type": "bug", "recent_issues_count": 0,
+			"id": "singleton", "default_task_type": "bug", "recent_issues_count": 0, "show_keybind_sheet": false,
 			"updated_at": at, "deleted_at": nil, "field_updated_at": map[string]any{},
 		}},
 	})
@@ -96,6 +96,8 @@ func TestPushPullNewColumnTypesRoundTrip(t *testing.T) {
 	// 0 is a real value here (show no recent issues), not "absent": it must not
 	// fall back to the DDL default of 6.
 	check("preferences", "recent_issues_count", json.Number("0"))
+	// false, not 0 — and not the DDL default of 1 either.
+	check("preferences", "show_keybind_sheet", false)
 	if _, ok := rows["asset"][0][fieldTSColumn]; ok {
 		t.Error("asset is whole-row LWW and must not carry field_updated_at")
 	}
@@ -111,10 +113,12 @@ func TestPushPullNewColumnTypesRoundTrip(t *testing.T) {
 	rows = pullRows(t, s)
 	check("preferences", "recent_issues_count", json.Number("12"))
 	check("preferences", "default_task_type", "bug")
+	check("preferences", "show_keybind_sheet", false)
 }
 
-// A new preferences row that omits recent_issues_count gets the DDL default,
-// the same 6 the client assumes when the field is absent.
+// A new preferences row that omits recent_issues_count and show_keybind_sheet
+// gets the DDL defaults, the same 6 and true the client assumes when a field
+// is absent.
 func TestPushPreferencesOmittedCountGetsDefault(t *testing.T) {
 	s := testServer(t)
 	const at = "2026-03-01T00:00:00.000Z"
@@ -124,9 +128,12 @@ func TestPushPreferencesOmittedCountGetsDefault(t *testing.T) {
 			"updated_at": at, "deleted_at": nil, "field_updated_at": map[string]any{},
 		}},
 	})
-	got := pullRows(t, s)["preferences"][0]["recent_issues_count"]
-	if got != json.Number("6") {
+	row := pullRows(t, s)["preferences"][0]
+	if got := row["recent_issues_count"]; got != json.Number("6") {
 		t.Fatalf("recent_issues_count = %#v, want 6", got)
+	}
+	if got := row["show_keybind_sheet"]; got != true {
+		t.Fatalf("show_keybind_sheet = %#v, want true", got)
 	}
 }
 

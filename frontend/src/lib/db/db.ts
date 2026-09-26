@@ -8,7 +8,7 @@
  */
 import { openDB, type IDBPDatabase, type IDBPTransaction } from 'idb';
 import { ENUM_SEEDS, ENUM_SEED_UPDATED_AT, STORES } from './types';
-import { V3_DEFAULTS, V4_DEFAULTS, backfillV3, backfillV4 } from './backfill';
+import { V3_DEFAULTS, V4_DEFAULTS, V5_DEFAULTS, backfillV3, backfillV4, backfillV5 } from './backfill';
 
 export const DB_NAME = 'planee';
 
@@ -120,6 +120,20 @@ const MIGRATIONS: Migration[] = [
       let cursor = await tx.objectStore(store).openCursor();
       while (cursor) {
         const upgraded = backfillV4(store, cursor.value as Record<string, unknown>);
+        if (upgraded) await cursor.update(upgraded);
+        cursor = await cursor.continue();
+      }
+    }
+  },
+  // v5 — preferences.show_keybind_sheet (whether holding Ctrl shows the
+  // shortcut cheat sheet). Server side: the v4 migration in backend/db.go.
+  // A row backfill only, under exactly v4's rules.
+  async (db, tx) => {
+    for (const store of Object.keys(V5_DEFAULTS)) {
+      if (!db.objectStoreNames.contains(store)) continue;
+      let cursor = await tx.objectStore(store).openCursor();
+      while (cursor) {
+        const upgraded = backfillV5(store, cursor.value as Record<string, unknown>);
         if (upgraded) await cursor.update(upgraded);
         cursor = await cursor.continue();
       }

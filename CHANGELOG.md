@@ -70,6 +70,8 @@ replace `(unreleased)` with the release date and start a new heading above it.
 - **Cards can take keyboard focus.** Tab/PageDown and Shift+Tab/PageUp move between cards, continuing into the next column. Ctrl+↑/↓ reorder a card and Ctrl+←/→ move it between columns, going through the same path and sync as a drag. Ctrl+E or Enter opens the card.
 - New **Edit version** dialog and board button: change a version's number (with a warning on duplicates) and its notes.
 - **Hold Ctrl** for about half a second to see key badges on the controls and a cheat sheet for the page. Each item shows the fallback key unless the app is installed.
+- "Show the shortcut cheat sheet when holding Ctrl" in Preferences (on by default, synced) hides the cheat sheet but keeps the key badges. Open pages pick up the change without a reload, including from another device.
+- **Schema change** (server migration v4, IndexedDB v5): `preferences.show_keybind_sheet`, backfilled to on for existing servers, devices and old backups without re-pushing.
 
 ## Bug Fixes
 

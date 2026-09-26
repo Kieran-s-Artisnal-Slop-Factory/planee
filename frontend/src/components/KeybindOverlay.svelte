@@ -12,7 +12,10 @@
    *   - A CHEAT SHEET: every keybind this page has, grouped Global / This page
    *     / Focused card, with its chords (the fallback outside an installed app,
    *     D25) and label. What cannot be used right now (a read-only version, no
-   *     card focused, focus in a text field) is dimmed.
+   *     card focused, focus in a text field) is dimmed. The synced preference
+   *     `preferences.show_keybind_sheet` turns it off, leaving only the badges;
+   *     it is read on mount and again whenever preferences change (here, in
+   *     another tab, or by sync).
    * Releasing Ctrl, pressing any other key (so a quick Ctrl+K never flashes
    * it), a pointer press, window blur or the tab being hidden takes it away.
    * It is not shown while a modal owns the keyboard (the keys are off then).
@@ -27,6 +30,9 @@
    * keybind-sheet, keybind-sheet-row (data-keybind-id, data-available).
    */
   import { onMount, tick } from 'svelte';
+  import { onChanged } from '../lib/db/changes';
+  import { getSingleton } from '../lib/db/repo';
+  import { DEFAULT_SHOW_KEYBIND_SHEET, type Preferences } from '../lib/db/types';
   import { chordLabel, isInstalledApp } from '../lib/ui/keys';
   import type { KeyScope } from '../lib/ui/keymap';
   import {
@@ -70,6 +76,8 @@
   let groups = $state<BadgeGroup[]>([]);
   let sheetEl = $state<HTMLElement>();
   let sheetAtTop = $state(false);
+  /** preferences.show_keybind_sheet: off shows the badges alone. */
+  let showSheet = $state(DEFAULT_SHOW_KEYBIND_SHEET);
   let opts: DisplayOptions = { installed: false, mac: false };
   let timer: ReturnType<typeof setTimeout> | undefined;
   let frame = 0;
@@ -211,7 +219,18 @@
     measure();
     window.addEventListener('scroll', remeasure, { capture: true, passive: true });
     window.addEventListener('resize', remeasure);
-    void placeSheet();
+    if (showSheet) void placeSheet();
+  }
+
+  let prefSeq = 0;
+  async function loadPreference() {
+    const mine = ++prefSeq;
+    try {
+      const prefs = await getSingleton<Preferences>('preferences');
+      if (mine === prefSeq) showSheet = prefs?.show_keybind_sheet ?? DEFAULT_SHOW_KEYBIND_SHEET;
+    } catch {
+      // IndexedDB unavailable: keep the default, the keys still work.
+    }
   }
 
   function hide() {
@@ -232,6 +251,8 @@
       installed: isInstalledApp(),
       mac: /Mac|iPhone|iPad|iPod/i.test(navigator.platform || navigator.userAgent),
     };
+    void loadPreference();
+    const stopPreference = onChanged(['preferences'], () => void loadPreference());
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key === 'Control') {
         // Held: the repeats are just the key still being down.
@@ -254,6 +275,7 @@
     document.addEventListener('visibilitychange', onVisibility);
     return () => {
       hide();
+      stopPreference();
       window.removeEventListener('keydown', onKeyDown, { capture: true });
       window.removeEventListener('keyup', onKeyUp, { capture: true });
       window.removeEventListener('blur', hide);
@@ -275,42 +297,44 @@
       </div>
     {/each}
 
-    <section class="kbo-sheet" class:top={sheetAtTop} data-testid="keybind-sheet" bind:this={sheetEl}>
-      <header class="kbo-head">
-        <strong>Keyboard shortcuts</strong>
-        <span class="kbo-muted">release Ctrl to hide</span>
-      </header>
-      <div class="kbo-sections">
-        {#each sections as section (section.scope)}
-          <div class="kbo-section">
-            <h2>{section.title}</h2>
-            {#if section.scope === 'card' && cardIdle}
-              <p class="kbo-muted kbo-note">Focus a card first (Ctrl+Shift+1/2/3).</p>
-            {/if}
-            <ul>
-              {#each section.rows as row (row.id)}
-                <li
-                  class:off={!row.available}
-                  data-testid="keybind-sheet-row"
-                  data-keybind-id={row.id}
-                  data-available={row.available}
-                >
-                  <span class="kbo-keys">
-                    {#each row.chords as chord, i (chord)}
-                      {#if i > 0}<span class="kbo-or">/</span>{/if}<kbd>{chord}</kbd>
-                    {/each}
-                  </span>
-                  <span class="kbo-label">{row.label}</span>
-                </li>
-              {/each}
-            </ul>
-          </div>
-        {/each}
-      </div>
-      {#if reserved.length > 0}
-        <p class="kbo-muted kbo-note">In the installed app, {reserved.join(' and ')} work too.</p>
-      {/if}
-    </section>
+    {#if showSheet}
+      <section class="kbo-sheet" class:top={sheetAtTop} data-testid="keybind-sheet" bind:this={sheetEl}>
+        <header class="kbo-head">
+          <strong>Keyboard shortcuts</strong>
+          <span class="kbo-muted">release Ctrl to hide</span>
+        </header>
+        <div class="kbo-sections">
+          {#each sections as section (section.scope)}
+            <div class="kbo-section">
+              <h2>{section.title}</h2>
+              {#if section.scope === 'card' && cardIdle}
+                <p class="kbo-muted kbo-note">Focus a card first (Ctrl+Shift+1/2/3).</p>
+              {/if}
+              <ul>
+                {#each section.rows as row (row.id)}
+                  <li
+                    class:off={!row.available}
+                    data-testid="keybind-sheet-row"
+                    data-keybind-id={row.id}
+                    data-available={row.available}
+                  >
+                    <span class="kbo-keys">
+                      {#each row.chords as chord, i (chord)}
+                        {#if i > 0}<span class="kbo-or">/</span>{/if}<kbd>{chord}</kbd>
+                      {/each}
+                    </span>
+                    <span class="kbo-label">{row.label}</span>
+                  </li>
+                {/each}
+              </ul>
+            </div>
+          {/each}
+        </div>
+        {#if reserved.length > 0}
+          <p class="kbo-muted kbo-note">In the installed app, {reserved.join(' and ')} work too.</p>
+        {/if}
+      </section>
+    {/if}
   </div>
 {/if}
 

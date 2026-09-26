@@ -216,7 +216,7 @@ Model: **project → versions → tasks of various types.**
 | D25 | Browser-reserved chords keep their primary key **plus a fallback** (Ctrl+N → Alt+N, Ctrl+Shift+P → Alt+Shift+P). The overlay shows the fallback unless planee runs as an installed app window. |
 | D26 | Ctrl+1/2/3 open the **New Task modal** with the status preset to TODO / In Progress / Done, prefilled with the board's project and version. |
 | D27 | Ctrl+4 focuses and opens the **project picker**. Ctrl+Shift+E opens a new **Edit version modal** (number and markdown description). Ctrl+Shift+C starts "Mark complete". |
-| D28 | Holding Ctrl for about 0.4 s shows **key badges on the controls plus a cheat sheet** for the page (including focused-card keys). Releasing Ctrl or pressing any other key hides them. |
+| D28 | Holding Ctrl for about 0.4 s shows **key badges on the controls plus a cheat sheet** for the page (including focused-card keys). Releasing Ctrl or pressing any other key hides them. The synced preference `preferences.show_keybind_sheet` (default on) turns the cheat sheet off and leaves the badges. |
 | D20 | **Ctrl/Cmd+K command palette**: the create actions, recent and matching tasks/projects/versions, and the overview pages (Project, Version, Task, Version task, Assets, Preferences, Settings). The navbar keeps only **Home, Preferences and Settings**. |
 
 ---

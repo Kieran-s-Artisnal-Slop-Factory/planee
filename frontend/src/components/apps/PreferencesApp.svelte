@@ -2,7 +2,7 @@
   import { onMount } from 'svelte';
   import { getSingleton, putSingleton } from '../../lib/db/repo';
   import type { Preferences, SyncFields, TaskTypeKey } from '../../lib/db/types';
-  import { DEFAULT_RECENT_ISSUES_COUNT, TASK_TYPE_VALUES } from '../../lib/db/types';
+  import { DEFAULT_RECENT_ISSUES_COUNT, DEFAULT_SHOW_KEYBIND_SHEET, TASK_TYPE_VALUES } from '../../lib/db/types';
   import Card from '../Card.svelte';
 
   type Values = Omit<Preferences, keyof SyncFields>;
@@ -27,6 +27,7 @@
     return {
       default_task_type: '',
       recent_issues_count: DEFAULT_RECENT_ISSUES_COUNT as number | null,
+      show_keybind_sheet: DEFAULT_SHOW_KEYBIND_SHEET,
     };
   }
 
@@ -37,10 +38,12 @@
     stored = {
       default_task_type: row.default_task_type,
       recent_issues_count: row.recent_issues_count ?? DEFAULT_RECENT_ISSUES_COUNT,
+      show_keybind_sheet: row.show_keybind_sheet ?? DEFAULT_SHOW_KEYBIND_SHEET,
     };
     draft = {
       default_task_type: row.default_task_type ?? '',
       recent_issues_count: stored.recent_issues_count,
+      show_keybind_sheet: stored.show_keybind_sheet,
     };
   }
 
@@ -66,6 +69,7 @@
     const values: Values = {
       default_task_type: draft.default_task_type as TaskTypeKey,
       recent_issues_count: count,
+      show_keybind_sheet: draft.show_keybind_sheet,
     };
     // A first save (or reviving a deleted row) writes every field: the server
     // column default_task_type is NOT NULL, so a new row must carry it. After
@@ -121,6 +125,19 @@
           bind:value={draft.recent_issues_count}
         />
       </div>
+      <div>
+        <label class="check">
+          <input
+            type="checkbox"
+            data-testid="preferences-show-keybind-sheet"
+            bind:checked={draft.show_keybind_sheet}
+          />
+          Show the shortcut cheat sheet when holding Ctrl
+        </label>
+        <p class="hint check-hint">
+          The key badges on buttons and cards show either way; this only hides the full list.
+        </p>
+      </div>
       {#if formError}
         <p class="form-error">{formError}</p>
       {/if}
@@ -147,6 +164,10 @@
 
   #f-recent_issues_count {
     max-width: 8rem;
+  }
+
+  .check-hint {
+    margin: var(--space-1) 0 0;
   }
 
   .saved {

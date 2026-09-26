@@ -734,3 +734,78 @@ test('holding Ctrl shows badges on the visible controls and the cheat sheet; any
   await page.keyboard.press('Escape');
   await expect(page.getByTestId('palette')).toHaveCount(0);
 });
+
+test('the synced preference turns the cheat sheet off, leaving the badges; an open board on the other device follows the sync, both ways', async ({
+  deviceA,
+  deviceB,
+  backend,
+}) => {
+  await seedProject(deviceA, {
+    project: { id: 'ks-p', name: 'Sheet' },
+    versions: [{ id: 'ks-v1', number: '0.1.0' }],
+    cards: [{ task: 'ks-a', link: 'ks-al', title: 'Only', status: 'todo', position: 0 }],
+  });
+  await syncAll(deviceA, deviceB);
+  const [a, b] = [deviceA.page, deviceB.page];
+  // B's board stays open throughout: its overlay must pick the change up from
+  // the sync, not from a reload.
+  await openBoard(deviceB, 'ks-p', 'ks-v1');
+  await expectSettledCard(b, 'todo', 'ks-al');
+  const before = await capture(deviceA, deviceB, backend);
+
+  // On by default; A turns it off.
+  await deviceA.goto('/preferences/');
+  const toggleA = a.getByTestId('preferences-show-keybind-sheet');
+  await expect(toggleA).toBeChecked();
+  await a.locator('#f-default_task_type').selectOption('feature');
+  await toggleA.uncheck();
+  await a.getByTestId('preferences-save').click();
+  await expect(a.getByTestId('preferences-saved')).toBeVisible();
+  await pollRow(deviceA, 'preferences', 'singleton', (r) => r?.show_keybind_sheet === false, 'A stored the preference');
+
+  // Holding Ctrl on A's board: the badges, no sheet.
+  await openBoard(deviceA, 'ks-p', 'ks-v1');
+  await expectSettledCard(a, 'todo', 'ks-al');
+  await holdCtrl(a);
+  await expect(overlay(a)).toBeVisible();
+  for (const id of ['fab.open', 'board.project', 'column.todo.new', 'column.todo.focus']) {
+    await expect(badge(a, id), id).toHaveCount(1);
+  }
+  await expect(a.getByTestId('keybind-sheet')).toHaveCount(0);
+  await a.keyboard.up('Control');
+  await expect(overlay(a)).toHaveCount(0);
+
+  // B follows once synced, without a reload.
+  await syncAll(deviceA, deviceB);
+  await pollRow(deviceB, 'preferences', 'singleton', (r) => r?.show_keybind_sheet === false, 'B pulled the preference');
+  await holdCtrl(b);
+  await expect(overlay(b)).toBeVisible();
+  await expect(badge(b, 'column.todo.new')).toHaveCount(1);
+  await expect(b.getByTestId('keybind-sheet')).toHaveCount(0);
+  await b.keyboard.up('Control');
+  const off = await capture(deviceA, deviceB, backend);
+  assertConverged(off);
+  assertFieldEverywhere(off, 'preferences', 'singleton', 'show_keybind_sheet', false);
+
+  // B turns it back on; A's open board follows.
+  await deviceB.goto('/preferences/');
+  const toggleB = b.getByTestId('preferences-show-keybind-sheet');
+  await expect(toggleB).not.toBeChecked();
+  await toggleB.check();
+  await b.getByTestId('preferences-save').click();
+  await expect(b.getByTestId('preferences-saved')).toBeVisible();
+  await syncAll(deviceB, deviceA);
+  await pollRow(deviceA, 'preferences', 'singleton', (r) => r?.show_keybind_sheet === true, 'A pulled the preference');
+  await holdCtrl(a);
+  await expect(a.getByTestId('keybind-sheet')).toBeVisible();
+  await expect(badge(a, 'column.todo.new')).toHaveCount(1);
+  await a.keyboard.up('Control');
+
+  const legs = await capture(deviceA, deviceB, backend);
+  assertConverged(legs);
+  assertFieldEverywhere(legs, 'preferences', 'singleton', 'show_keybind_sheet', true);
+  assertFieldEverywhere(legs, 'preferences', 'singleton', 'default_task_type', 'feature');
+  assertFieldEverywhere(legs, 'preferences', 'singleton', 'recent_issues_count', 6);
+  assertIsolatedEverywhere(before, legs, [{ store: 'preferences', id: 'singleton' }]);
+  assertInvariantsEverywhere(legs);
+});

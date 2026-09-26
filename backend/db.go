@@ -46,12 +46,13 @@ CREATE TABLE sync_state (
 // To change the schema: edit sql/schema.sql, then APPEND a function here that
 // takes a database from the previous version to the new one. Never edit or
 // reorder a migration that has shipped — a database out there is already past
-// it and will never run it again. db_test.go checks that migrated v1 and v2
-// databases (testdata/schema_v1.sql, schema_v2.sql) end up with exactly the
-// columns a fresh one has.
+// it and will never run it again. db_test.go checks that migrated v1, v2 and
+// v3 databases (testdata/schema_v1.sql, schema_v2.sql, schema_v3.sql) end up
+// with exactly the columns a fresh one has.
 var migrations = []func(*sql.Tx) error{
 	migrateV2, // 1 -> 2
 	migrateV3, // 2 -> 3
+	migrateV4, // 3 -> 4
 }
 
 // latestSchemaVersion is the user_version a fully up-to-date database carries.
@@ -126,6 +127,20 @@ func migrateV2(tx *sql.Tx) error {
 // reads identically on the server and every upgraded device.
 func migrateV3(tx *sql.Tx) error {
 	const stmt = `ALTER TABLE preferences ADD COLUMN recent_issues_count INTEGER NOT NULL DEFAULT 6`
+	if _, err := tx.Exec(stmt); err != nil {
+		return fmt.Errorf("%s: %w", stmt, err)
+	}
+	return nil
+}
+
+// migrateV4: whether holding Ctrl shows the keyboard-shortcut cheat sheet
+// (the badges on the controls show either way), a synced preference.
+//
+// Same contract as migrateV3: the DEFAULT (1, shown) matches sql/schema.sql,
+// the IndexedDB v5 migration (backfillV5) fills the same `true` into existing
+// client rows, and no stamp is added on either side.
+func migrateV4(tx *sql.Tx) error {
+	const stmt = `ALTER TABLE preferences ADD COLUMN show_keybind_sheet INTEGER NOT NULL DEFAULT 1`
 	if _, err := tx.Exec(stmt); err != nil {
 		return fmt.Errorf("%s: %w", stmt, err)
 	}
