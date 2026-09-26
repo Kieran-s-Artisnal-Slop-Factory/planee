@@ -35,48 +35,6 @@ export interface TableMeta {
 /** Parent tables before child tables (FK order), enum tables included. */
 export const TABLES: TableMeta[] = [
   {
-    name: 'project',
-    fieldMerge: false,
-    singleton: false,
-    enum: false,
-    columns: [
-    { name: 'description', type: 'text', nullable: false, references: null },
-    { name: 'version', type: 'text', nullable: false, references: null },
-    ],
-  },
-  {
-    name: 'version',
-    fieldMerge: false,
-    singleton: false,
-    enum: false,
-    columns: [
-    { name: 'number', type: 'text', nullable: false, references: null },
-    { name: 'project', type: 'text', nullable: false, references: 'project' },
-    ],
-  },
-  {
-    name: 'task',
-    fieldMerge: false,
-    singleton: false,
-    enum: false,
-    columns: [
-    { name: 'project', type: 'text', nullable: false, references: 'project' },
-    { name: 'description', type: 'text', nullable: true, references: null },
-    { name: 'priority', type: 'integer', nullable: false, references: null },
-    { name: 'subtasks', type: 'text', nullable: true, references: null },
-    ],
-  },
-  {
-    name: 'version_task',
-    fieldMerge: false,
-    singleton: false,
-    enum: false,
-    columns: [
-    { name: 'version', type: 'text', nullable: false, references: 'version' },
-    { name: 'task', type: 'text', nullable: false, references: 'task' },
-    ],
-  },
-  {
     name: 'task_type',
     fieldMerge: false,
     singleton: false,
@@ -88,15 +46,6 @@ export const TABLES: TableMeta[] = [
     ],
   },
   {
-    name: 'preferences',
-    fieldMerge: true,
-    singleton: true,
-    enum: false,
-    columns: [
-    { name: 'default_task_type', type: 'text', nullable: false, references: 'task_type' },
-    ],
-  },
-  {
     name: 'status_type',
     fieldMerge: false,
     singleton: false,
@@ -105,6 +54,76 @@ export const TABLES: TableMeta[] = [
     columns: [
     { name: 'label', type: 'text', nullable: false, references: null },
     { name: 'position', type: 'integer', nullable: false, references: null },
+    ],
+  },
+  {
+    name: 'project',
+    fieldMerge: true,
+    singleton: false,
+    enum: false,
+    columns: [
+    { name: 'name', type: 'text', nullable: false, references: null },
+    { name: 'description', type: 'text', nullable: false, references: null },
+    ],
+  },
+  {
+    name: 'version',
+    fieldMerge: true,
+    singleton: false,
+    enum: false,
+    columns: [
+    { name: 'number', type: 'text', nullable: false, references: null },
+    { name: 'project', type: 'text', nullable: false, references: 'project' },
+    { name: 'description', type: 'text', nullable: true, references: null },
+    { name: 'completed', type: 'boolean', nullable: false, references: null },
+    ],
+  },
+  {
+    name: 'task',
+    fieldMerge: true,
+    singleton: false,
+    enum: false,
+    columns: [
+    { name: 'project', type: 'text', nullable: false, references: 'project' },
+    { name: 'title', type: 'text', nullable: false, references: null },
+    { name: 'task_type', type: 'text', nullable: false, references: 'task_type' },
+    { name: 'description', type: 'text', nullable: true, references: null },
+    { name: 'priority', type: 'integer', nullable: false, references: null },
+    { name: 'subtasks', type: 'text', nullable: true, references: null },
+    ],
+  },
+  {
+    name: 'version_task',
+    fieldMerge: true,
+    singleton: false,
+    enum: false,
+    columns: [
+    { name: 'version', type: 'text', nullable: false, references: 'version' },
+    { name: 'task', type: 'text', nullable: false, references: 'task' },
+    { name: 'status', type: 'text', nullable: false, references: 'status_type' },
+    { name: 'position', type: 'real', nullable: false, references: null },
+    ],
+  },
+  {
+    name: 'asset',
+    fieldMerge: false,
+    singleton: false,
+    enum: false,
+    columns: [
+    { name: 'name', type: 'text', nullable: false, references: null },
+    { name: 'mime', type: 'text', nullable: false, references: null },
+    { name: 'size', type: 'integer', nullable: false, references: null },
+    { name: 'data', type: 'text', nullable: false, references: null },
+    ],
+  },
+  {
+    name: 'preferences',
+    fieldMerge: true,
+    singleton: true,
+    enum: false,
+    columns: [
+    { name: 'default_task_type', type: 'text', nullable: false, references: 'task_type' },
+    { name: 'recent_issues_count', type: 'integer', nullable: false, references: null },
     ],
   },
 ];
@@ -161,8 +180,22 @@ export async function seedParents(
   return parents;
 }
 
+/** True for a column that points into an enum table (its values are the enum's keys). */
+export function isEnumRef(col: ColumnMeta): boolean {
+  return col.references != null && tableOf(col.references).enum;
+}
+
 /** A representative value for a column, distinct per `variant`. */
 export function sampleValue(col: ColumnMeta, variant: number): unknown {
+  if (isEnumRef(col)) {
+    // Only a DECLARED key is a valid value — the app seeded exactly those rows
+    // and nothing else. A different key per variant, so a lost update is
+    // visible; taken from the END of the list because a column DEFAULT is
+    // usually one of the first keys, and a value that silently snaps back to
+    // its default must not happen to equal the sample.
+    const values = tableOf(col.references!).values!;
+    return values[values.length - 1 - (variant % values.length)]!.key;
+  }
   switch (col.type) {
     case 'text':
       // Includes a quote, a backslash, a newline and non-ASCII on purpose:

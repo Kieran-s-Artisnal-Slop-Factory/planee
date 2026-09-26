@@ -1,87 +1,132 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { all, patch, put, softDelete, withSyncFields } from '../../lib/db/repo';
+  import { all, get, patch, softDelete } from '../../lib/db/repo';
+  import { onChanged } from '../../lib/db/changes';
+  import { recordView } from '../../lib/ui/recent';
   import type { Project, SyncFields } from '../../lib/db/types';
+  import { changedFields } from '../../lib/crud';
   import Card from '../Card.svelte';
+  import MarkdownField from '../markdown/MarkdownField.svelte';
+  import MarkdownCell from '../markdown/MarkdownCell.svelte';
+  import ProjectCreateForm from '../forms/ProjectCreateForm.svelte';
+
+  type ProjectValues = Omit<Project, keyof SyncFields>;
 
   let loading = $state(true);
   let rows: Project[] = $state([]);
 
-
-  let editingId: string | null = $state(null); // null = closed, '' = new row
+  /** The "+ New" form (ProjectCreateForm) is open. */
+  let creating = $state(false);
+  let editingId: string | null = $state(null); // null = closed, else the project being edited
+  let editingOriginal: ProjectValues | null = null; // the row as it was when Edit was clicked
   let formError: string | null = $state(null);
   let draft = $state(blankDraft());
 
+  let formEl: HTMLFormElement | null = $state(null);
+  /**
+   * True while the description's MarkdownField is open in its editor. The
+   * form's own Save is disabled meanwhile, so submitting cannot close the
+   * form over the unsaved text.
+   * Read from the DOM: the field's Save button exists only while editing.
+   */
+  let markdownEditing = $state(false);
+  $effect(() => {
+    const form = formEl;
+    if (!form) {
+      markdownEditing = false;
+      return;
+    }
+    const check = () => (markdownEditing = form.querySelector('[data-testid="project-description-save"]') !== null);
+    const observer = new MutationObserver(check);
+    observer.observe(form, { childList: true, subtree: true });
+    check();
+    return () => observer.disconnect();
+  });
 
-  function blankDraft() {
+  function blankDraft(): ProjectValues {
     return {
-    description: '',
-    version: '',
+      name: '',
+      description: '',
     };
   }
 
-
-
-
-
   async function refresh() {
     rows = await all<Project>('project');
-
-
   }
 
-  onMount(async () => {
-    await refresh();
-    loading = false;
+  onMount(() => {
+    // Live: rows created elsewhere (the FAB, another tab, a sync) show up. Read-only.
+    const stop = onChanged(['project'], () => void refresh());
+    void refresh().then(() => (loading = false));
+    return stop;
   });
 
   function startCreate() {
-    draft = blankDraft();
-
-    formError = null;
-    editingId = '';
+    editingId = null;
+    creating = true;
   }
 
   function startEdit(row: Project) {
     draft = {
+      name: row.name ?? '',
       description: row.description ?? '',
-      version: row.version ?? '',
     };
-
+    editingOriginal = { ...draft };
     formError = null;
+    creating = false;
     editingId = row.id;
+    recordView('project', row.id);
+  }
+
+  /** An existing row's description: its own Save patches just that field, straight away (D10). */
+  async function saveDescription(md: string) {
+    const id = editingId;
+    if (!id) return;
+    const saved = await patch<Project>('project', id, { description: md });
+    if (!saved) throw new Error('That row was deleted somewhere else — nothing was saved.');
+    draft.description = md;
+    if (editingOriginal) editingOriginal.description = md;
+    await refresh();
+  }
+
+  /** The stored description right now, so a concurrent change is caught before it is overwritten. */
+  async function freshDescription() {
+    const row = editingId ? await get<Project>('project', editingId) : undefined;
+    if (!row) throw new Error('That row was deleted somewhere else — nothing was saved.');
+    return row.description ?? '';
   }
 
   async function save(e: SubmitEvent) {
     e.preventDefault();
     formError = null;
-    let values: Omit<Project, keyof SyncFields>;
-    try {
-      values = {
-      description: draft.description,
-      version: draft.version,
-      };
-    } catch (err) {
-      formError = 'Invalid JSON: ' + (err instanceof Error ? err.message : String(err));
+    if (markdownEditing) {
+      formError = 'Save or cancel the description first.';
       return;
     }
-    let savedId: string;
-    if (editingId) {
-      // patch() re-reads the row from the store and changes ONLY these fields.
-      // Writing `{ ...rowFromTheList, ...values }` instead would push the
-      // component's snapshot back over anything that changed underneath it —
-      // an edit pulled from another device, a change made in another tab —
-      // and that reversion then propagates as if it were deliberate.
-      const saved = await patch<Project>('project', editingId, values);
+    const values: ProjectValues = {
+      name: draft.name.trim(),
+      description: draft.description,
+    };
+    if (!values.name) {
+      formError = 'A project needs a name.';
+      return;
+    }
+    const id = editingId;
+    if (!id) return;
+    // patch() re-reads the row from the store and changes ONLY the fields
+    // named — and only the ones the user actually changed are named, so an
+    // untouched field keeps its per-field stamp and a concurrent edit to it
+    // on another device still wins.
+    const changes: Partial<ProjectValues> = editingOriginal ? changedFields(editingOriginal, values) : { ...values };
+    // The description is not this button's: its MarkdownField saved it already.
+    delete changes.description;
+    if (Object.keys(changes).length > 0) {
+      const saved = await patch<Project>('project', id, changes);
       if (!saved) {
         formError = 'That row was deleted somewhere else — nothing was saved.';
         await refresh();
         return;
       }
-      savedId = editingId;
-    } else {
-      const created = await put('project', withSyncFields(values));
-      savedId = created.id;
     }
 
     editingId = null;
@@ -100,27 +145,53 @@
   <button class="btn btn-primary" data-testid="project-new" onclick={startCreate}>+ New</button>
 </div>
 
+{#if creating}
+  <Card title="New project">
+    <ProjectCreateForm
+      autofocus
+      onCreated={() => {
+        creating = false;
+        void refresh();
+      }}
+      onCancel={() => (creating = false)}
+    />
+  </Card>
+{/if}
+
 {#if editingId !== null}
-  <Card title={editingId ? 'Edit' : 'New project'}>
-    <form class="stack" onsubmit={save}>
+  {#key editingId}
+  <Card title="Edit">
+    <form class="stack" onsubmit={save} bind:this={formEl}>
       <div>
-        <label for="f-description">Description</label>
-        <input id="f-description" bind:value={draft.description} required />
+        <label for="f-name">Name</label>
+        <input id="f-name" bind:value={draft.name} required />
       </div>
-      <div>
-        <label for="f-version">Version</label>
-        <input id="f-version" bind:value={draft.version} required />
+      <div class="md-box">
+        <MarkdownField
+          label="Description"
+          testid="project-description"
+          value={draft.description}
+          placeholder="No description yet."
+          minHeight="8rem"
+          onSave={saveDescription}
+          getFresh={freshDescription}
+        />
+        <p class="hint md-note">Saved on its own with its Save button.</p>
       </div>
 
       {#if formError}
         <p class="form-error">{formError}</p>
       {/if}
       <div class="row">
-        <button class="btn btn-primary" data-testid="project-save" type="submit">Save</button>
+        <button class="btn btn-primary" data-testid="project-save" type="submit" disabled={markdownEditing}>Save</button>
         <button class="btn" type="button" onclick={() => (editingId = null)}>Cancel</button>
+        {#if markdownEditing}
+          <span class="hint">Save or cancel the description first.</span>
+        {/if}
       </div>
     </form>
   </Card>
+  {/key}
 {/if}
 
 {#if loading}
@@ -132,16 +203,16 @@
     <table class="data-table">
       <thead>
         <tr>
+          <th>Name</th>
           <th>Description</th>
-          <th>Version</th>
           <th></th>
         </tr>
       </thead>
       <tbody>
         {#each rows as row (row.id)}
           <tr data-testid="project-row" data-row-id={row.id}>
-            <td>{row.description ?? ''}</td>
-            <td>{row.version ?? ''}</td>
+            <td>{row.name || '(unnamed)'}</td>
+            <td><MarkdownCell markdown={row.description} testid="project-description-cell" /></td>
             <td class="actions">
               <button class="btn btn-sm" data-testid="project-edit" onclick={() => startEdit(row)}>Edit</button>
               <button class="btn btn-sm btn-danger" data-testid="project-delete" onclick={() => del(row)}>Delete</button>
@@ -160,34 +231,18 @@
     justify-content: flex-end;
   }
 
-  .mono {
-    font-family: ui-monospace, monospace;
-    font-size: var(--font-size-sm);
+  .md-box {
+    padding: var(--space-3);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-md);
+  }
+
+  .md-note {
+    margin: var(--space-2) 0 0;
   }
 
   .form-error {
     color: var(--color-danger);
     font-size: var(--font-size-sm);
-  }
-
-  .inline-new {
-    display: flex;
-    gap: var(--space-2);
-    margin-top: var(--space-2);
-  }
-
-  .inline-new input {
-    max-width: 16rem;
-  }
-
-  .link-list {
-    display: flex;
-    flex-wrap: wrap;
-    gap: var(--space-2) var(--space-4);
-    padding: var(--space-2) 0;
-  }
-
-  .link-item {
-    margin: 0;
   }
 </style>

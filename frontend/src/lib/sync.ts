@@ -81,16 +81,35 @@ export function getSyncUrl(): string {
 
 const SYNC_MODE_KEY = 'planee-sync-mode';
 
+export type SyncMode = 'offline' | 'sync';
+
 /**
- * 'offline' disables background sync entirely. Absent/anything else means
- * 'sync' — an empty URL then syncs same-origin, which is the correct default
- * when the Go backend serves the frontend.
+ * Pure sync-mode decision, split out so it is unit-testable without a browser.
+ *
+ * - An explicit choice saved in Settings (`stored`) always wins, in both
+ *   directions — a Pages visitor who configures a server can turn sync on.
+ * - Otherwise the build decides: `PUBLIC_DEFAULT_SYNC_MODE=offline` (the GitHub
+ *   Pages build) starts offline, because same-origin there is a static host
+ *   with no /sync endpoints. Any other value, or none, means 'sync' — an empty
+ *   URL then syncs same-origin, which is correct when the Go backend serves
+ *   the frontend.
  */
-export function getSyncMode(): 'offline' | 'sync' {
-  return localStorage.getItem(SYNC_MODE_KEY) === 'offline' ? 'offline' : 'sync';
+export function resolveSyncMode(stored: string | null, buildDefault: string | undefined): SyncMode {
+  if (stored === 'offline' || stored === 'sync') return stored;
+  return buildDefault === 'offline' ? 'offline' : 'sync';
 }
 
-export function setSyncMode(mode: 'offline' | 'sync'): void {
+/** True when this build was made to start offline (the GitHub Pages build). */
+export function isOfflineDefaultBuild(): boolean {
+  return import.meta.env.PUBLIC_DEFAULT_SYNC_MODE === 'offline';
+}
+
+/** 'offline' disables background sync entirely; see resolveSyncMode. */
+export function getSyncMode(): SyncMode {
+  return resolveSyncMode(localStorage.getItem(SYNC_MODE_KEY), import.meta.env.PUBLIC_DEFAULT_SYNC_MODE);
+}
+
+export function setSyncMode(mode: SyncMode): void {
   localStorage.setItem(SYNC_MODE_KEY, mode);
 }
 

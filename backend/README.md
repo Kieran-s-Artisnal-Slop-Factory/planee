@@ -49,8 +49,15 @@ Images are published to `ghcr.io/descent098/planee` by
   reference data: `sql/schema.sql` seeds them with the same ids every client
   seeds for itself, so they are absent from `tableOrder`/`tables` in
   `sync.go` — a push naming one is refused as unknown and a pull never
-  carries one. Changing a value list means re-running the `INSERT OR IGNORE`
-  seed against existing databases (and removing dropped rows by hand).
+  carries one. Changing a value list means a schema migration that re-runs
+  the `INSERT OR IGNORE` seed and deletes dropped rows (see
+  [Evolving the schema](#evolving-the-schema)).
+- `project`, `version`, `task`, `version_task` and `preferences` merge **per
+  field**, using the `field_updated_at` stamp map, so two devices editing
+  different fields of one row both keep their edit. The server stores that map
+  with exactly one stamp per column except `id`, `updated_at` and `server_seq`.
+  A missing stamp is filled from the row's `updated_at`. `asset` and anything
+  else not flagged `fieldMerge` is whole-row last-write-wins.
 
 ## Sync gotchas worth knowing
 
@@ -85,8 +92,67 @@ client already handles the first three; the fourth is a product decision.
 
 ## Evolving the schema
 
-`sql/schema.sql` runs once on a fresh database (`PRAGMA user_version` guard).
-When you change the schema, update **both** `sql/schema.sql` + the table
-metadata in `sync.go`, and append a matching IndexedDB migration in
-`frontend/src/lib/db/db.ts`. For an existing database, apply the change with
-an `ALTER TABLE` migration of your own (or start from a fresh file and sync).
+The schema version lives in SQLite's `PRAGMA user_version`. `openDB`
+([db.go](db.go)) brings every database to the latest version on startup:
+
+```mermaid
+flowchart TD
+  O[openDB] --> V{user_version}
+  V -- 0: new file --> F[exec sql/schema.sql + serverDDL<br/>insert sync_state with a new epoch] --> S[user_version = 1 + len migrations]
+  V -- "1 .. latest-1" --> M["run migrations[user_version-1:]<br/>one transaction each, bumping user_version inside it"]
+  V -- latest --> R[ready]
+  V -- "> latest" --> E[refuse to start:<br/>database is from a newer build]
+  S --> R
+  M --> R
+```
+
+- `sql/schema.sql` is always the **full, current** DDL. A fresh database gets
+  it in one go and never runs a migration.
+- `migrations` in `db.go` is the ordered list of steps an **existing**
+  database takes. `migrations[0]` takes v1 (the original schema, frozen in
+  [`testdata/schema_v1.sql`](testdata/schema_v1.sql)) to v2, and so on.
+- Each step runs in its own transaction, with `PRAGMA user_version` set inside
+  it. A step that fails rolls back completely, and the next start retries it.
+- Migrations never touch `sync_state`. Changing the epoch would make every
+  client drop its cursor and re-pull everything.
+- `foreign_keys` stays off, as it does for sync. SQLite only allows
+  `ADD COLUMN ... REFERENCES` with a non-NULL default while enforcement is off.
+
+### Adding a migration
+
+1. Edit `sql/schema.sql` into the new full schema.
+2. **Append** `migrateVN` to `migrations` in `db.go`. It takes a database from
+   the previous version to exactly that schema. Never edit or reorder a step
+   that has shipped: databases already past it will never run it again.
+   - `ALTER TABLE ... ADD COLUMN` for new columns. A `NOT NULL` column needs
+     the same `DEFAULT` as `schema.sql`, which is also what existing rows get.
+   - `ALTER TABLE ... DROP COLUMN` for removed columns.
+   - `CREATE TABLE` for new tables. Paste a frozen copy of the DDL; don't
+     reference `schema.sql`, because it will keep changing.
+   - SQLite can't change a column's type, constraint or `DEFAULT` with
+     `ALTER`. Either rebuild the table (create new, copy, drop, rename, all in
+     the step's transaction) or accept the difference and record it in
+     `knownMigrationDifferences` in `db_test.go` with the reason. v2 does the
+     latter for `task.priority`'s default: 3 on migrated databases, 4 on
+     fresh ones. The client always sends `priority`, so the difference can't be
+     observed through sync.
+3. Update the table metadata in `sync.go` (`tableOrder`, `tables`).
+4. Append the matching IndexedDB migration in `frontend/src/lib/db/db.ts`.
+   It must backfill **the same defaults** onto existing client rows, without
+   restamping `updated_at` or queueing a push, so rows that existed before the
+   upgrade agree on both sides with no sync traffic.
+5. Mirror the change in `frontend/tests/sync/helpers/schema.ts`.
+6. `go test ./...`. `TestMigrateV1MatchesFresh` and `TestMigrateV2MatchesFresh`
+   migrate a v1 database and one a v2 build created
+   ([`testdata/schema_v2.sql`](testdata/schema_v2.sql)), and compare
+   `PRAGMA table_info` and `PRAGMA foreign_key_list` for every table against a
+   fresh one. Columns are compared by name, because `ADD COLUMN` appends while
+   a fresh `CREATE TABLE` lists columns in schema order.
+   `TestMigrateV1BackfillsExistingRows` and `TestMigrateV2BackfillsExistingRows`
+   check the values existing rows end up with. Extend them when a migration
+   adds or changes columns. When a schema ships, freeze it as the next
+   `testdata/schema_vN.sql` (from `git show`) so later migrations are tested
+   from that baseline too.
+
+Enum value changes are migrations too: re-run the `INSERT OR IGNORE` seed (and
+delete dropped values) in a new step.

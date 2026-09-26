@@ -1,7 +1,7 @@
 import { test, expect } from './helpers/devices';
 import type { Device } from './helpers/devices';
 import { assertConverged, assertFieldEverywhere, assertInvariants, capture } from './helpers/oracle';
-import { SYNCED_TABLES, buildRow, sampleValue, seedParents as seedParentsWith, tableOf, type TableMeta } from './helpers/schema';
+import { SYNCED_TABLES, buildRow, isEnumRef, sampleValue, seedParents as seedParentsWith, tableOf, type TableMeta } from './helpers/schema';
 
 /**
  * Every store, every column, every value class — pushed from A, read back off
@@ -29,11 +29,14 @@ async function mirrorParents(dev: Device, parents: Record<string, string>): Prom
 for (const table of SYNCED_TABLES) {
   test.describe(table.name, () => {
     for (const col of table.columns) {
-      // FK columns are exercised by the referential-integrity invariant rather
-      // than by swapping values, which would just orphan the row.
-      if (col.references) continue;
+      // Row-backed FK columns are exercised by the referential-integrity
+      // invariant rather than by swapping values, which would just orphan the
+      // row. An FK into an ENUM table is a plain value column with a closed
+      // set of valid keys, so it gets a full round-trip case like any other
+      // (sampleValue picks declared keys).
+      if (col.references && !isEnumRef(col)) continue;
 
-      test(col.name + ' (' + col.type + ') round-trips exactly', async ({
+      test(col.name + ' (' + (isEnumRef(col) ? col.references + ' key' : col.type) + ') round-trips exactly', async ({
         deviceA,
         deviceB,
         backend,
@@ -113,7 +116,7 @@ for (const table of SYNCED_TABLES) {
 
       const legs = await capture(deviceA, deviceB, backend);
       for (const col of table.columns) {
-        if (col.references) continue;
+        if (col.references && !isEnumRef(col)) continue;
         assertFieldEverywhere(legs, table.name, id, col.name, full[col.name]);
       }
     });

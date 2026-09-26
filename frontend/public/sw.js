@@ -23,7 +23,7 @@
 // Bump this on any meaningful change to this file: `activate` only purges
 // caches whose name differs, so a constant name makes that step dead code and
 // lets a previous deploy's (or a poisoned) entry survive forever.
-const CACHE_NAME = 'planee-cache-v2';
+const CACHE_NAME = 'planee-cache-v7';
 
 // Everything under this prefix belongs to this app. Cache Storage is keyed by
 // ORIGIN, not by service-worker scope, so if two of these apps are ever served
@@ -39,7 +39,55 @@ const CACHE_PREFIX = 'planee-cache-';
 // the base.
 const BASE = new URL(self.registration.scope).pathname; // always ends with '/'
 const ASSET_PREFIX = BASE + '_astro/';
-const SHELL = ['', 'project/', 'version/', 'task/', 'version_task/', 'preferences/', 'settings/', 'onboarding/', 'favicon.svg', 'manifest.webmanifest'].map((p) => BASE + p);
+const SHELL = ['', 'board/', 'project/', 'version/', 'task/', 'version_task/', 'asset/', 'preferences/', 'settings/', 'onboarding/', 'favicon.svg', 'manifest.webmanifest'].map((p) => BASE + p);
+
+// Self-hosted fonts and the stylesheets that name them, all outside _astro/,
+// so the crawl below cannot discover them; they are seeded into it explicitly
+// so drawings and formulas render offline:
+//  - Excalidraw's hand-drawn fonts (public/excalidraw/fonts, refreshed by
+//    `npm run copy:excalidraw-fonts`);
+//  - MathLive's stylesheets and the twenty KaTeX faces it draws with
+//    (public/math, `npm run copy:math-assets`, D21) — lib/math/fonts.ts links
+//    the stylesheets, and their url()s are relative, which the crawl does not
+//    follow either.
+// src/lib/sw.test.ts fails if this list and the files on disk drift apart.
+const FONT_ASSETS = [
+  'excalidraw/fonts/Cascadia/CascadiaCode-Regular.woff2',
+  'excalidraw/fonts/Excalifont/Excalifont-Regular-349fac6ca4700ffec595a7150a0d1e1d.woff2',
+  'excalidraw/fonts/Excalifont/Excalifont-Regular-3f2c5db56cc93c5a6873b1361d730c16.woff2',
+  'excalidraw/fonts/Excalifont/Excalifont-Regular-41b173a47b57366892116a575a43e2b6.woff2',
+  'excalidraw/fonts/Excalifont/Excalifont-Regular-623ccf21b21ef6b3a0d87738f77eb071.woff2',
+  'excalidraw/fonts/Excalifont/Excalifont-Regular-a88b72a24fb54c9f94e3b5fdaa7481c9.woff2',
+  'excalidraw/fonts/Excalifont/Excalifont-Regular-b9dcf9d2e50a1eaf42fc664b50a3fd0d.woff2',
+  'excalidraw/fonts/Excalifont/Excalifont-Regular-be310b9bcd4f1a43f571c46df7809174.woff2',
+  'excalidraw/fonts/Nunito/Nunito-Regular-XRXI3I6Li01BKofiOc5wtlZ2di8HDIkhdTA3j6zbXWjgevT5.woff2',
+  'excalidraw/fonts/Nunito/Nunito-Regular-XRXI3I6Li01BKofiOc5wtlZ2di8HDIkhdTQ3j6zbXWjgeg.woff2',
+  'excalidraw/fonts/Nunito/Nunito-Regular-XRXI3I6Li01BKofiOc5wtlZ2di8HDIkhdTk3j6zbXWjgevT5.woff2',
+  'excalidraw/fonts/Nunito/Nunito-Regular-XRXI3I6Li01BKofiOc5wtlZ2di8HDIkhdTo3j6zbXWjgevT5.woff2',
+  'excalidraw/fonts/Nunito/Nunito-Regular-XRXI3I6Li01BKofiOc5wtlZ2di8HDIkhdTs3j6zbXWjgevT5.woff2',
+  'math/mathlive-fonts.css',
+  'math/mathlive-static.css',
+  'math/fonts/KaTeX_AMS-Regular.woff2',
+  'math/fonts/KaTeX_Caligraphic-Bold.woff2',
+  'math/fonts/KaTeX_Caligraphic-Regular.woff2',
+  'math/fonts/KaTeX_Fraktur-Bold.woff2',
+  'math/fonts/KaTeX_Fraktur-Regular.woff2',
+  'math/fonts/KaTeX_Main-Bold.woff2',
+  'math/fonts/KaTeX_Main-BoldItalic.woff2',
+  'math/fonts/KaTeX_Main-Italic.woff2',
+  'math/fonts/KaTeX_Main-Regular.woff2',
+  'math/fonts/KaTeX_Math-BoldItalic.woff2',
+  'math/fonts/KaTeX_Math-Italic.woff2',
+  'math/fonts/KaTeX_SansSerif-Bold.woff2',
+  'math/fonts/KaTeX_SansSerif-Italic.woff2',
+  'math/fonts/KaTeX_SansSerif-Regular.woff2',
+  'math/fonts/KaTeX_Script-Regular.woff2',
+  'math/fonts/KaTeX_Size1-Regular.woff2',
+  'math/fonts/KaTeX_Size2-Regular.woff2',
+  'math/fonts/KaTeX_Size3-Regular.woff2',
+  'math/fonts/KaTeX_Size4-Regular.woff2',
+  'math/fonts/KaTeX_Typewriter-Regular.woff2',
+].map((p) => BASE + p);
 
 // Servers often send `Vary: Origin`, and module import() requests carry an
 // Origin header while our install-time fetches don't — without ignoreVary the
@@ -53,7 +101,15 @@ const NAV_OPTS = { ignoreVary: true, ignoreSearch: true };
 // Background-warm pacing: gap between fetches and a ceiling on how many the
 // crawl will pull, so a large bundle can't hammer the host.
 const WARM_DELAY_MS = 120;
-const WARM_MAX_ASSETS = 600;
+// Sized from the measured production build (board + markdown editor): a full
+// crawl was 259 fetches (12 shell pages/files, 13 Excalidraw fonts, 234 _astro
+// files), +25% headroom. With notey's editor (10c-E) it measured 276: the 22
+// seeded math files arrived, KaTeX's 19 bundled fonts left (MathLive draws
+// every formula now), so 12 + 35 seeded + 229 _astro — still ~17% under the
+// cap, so it stays. tests/sync/sw-crawl.spec.ts replays this crawl
+// against the built dist/ and fails when the bundle outgrows the cap or a
+// file becomes unreachable — raise it there, deliberately, not by guesswork.
+const WARM_MAX_ASSETS = 324;
 
 /** Transient failures worth retrying (throttles and gateway hiccups). */
 const RETRY_STATUS = new Set([429, 500, 502, 503, 504]);
@@ -115,8 +171,8 @@ async function precacheShell() {
  */
 async function warmAssetCache() {
   const cache = await caches.open(CACHE_NAME);
-  const seen = new Set(SHELL);
-  const queue = [...SHELL];
+  const seen = new Set([...SHELL, ...FONT_ASSETS]);
+  const queue = [...SHELL, ...FONT_ASSETS];
   let fetched = 0;
 
   while (queue.length > 0 && fetched < WARM_MAX_ASSETS) {
@@ -152,7 +208,11 @@ async function warmAssetCache() {
     // Relative specifiers — note the bundler emits dynamic imports with
     // BACKTICKS, e.g. import(`./chunk.js`), so all three quote styles count.
     const from = new URL(url, self.location.origin);
-    for (const match of text.matchAll(/['"`](\.{1,2}\/[A-Za-z0-9_.\-/]+)['"`]/g)) {
+    // Only specifiers that name a loadable asset: bundled libraries are full
+    // of strings that merely LOOK relative ("./locales/de-DE.json",
+    // "./fonts/Virgil/…", "./mm_resize"), and each one would otherwise cost a
+    // paced 404 fetch against WARM_MAX_ASSETS.
+    for (const match of text.matchAll(/['"`](\.{1,2}\/[A-Za-z0-9_.\-/]+\.(?:m?js|css))['"`]/g)) {
       try {
         enqueue(new URL(match[1], from).pathname);
       } catch {
@@ -201,9 +261,16 @@ self.addEventListener('activate', (event) => {
         )
       )
       .then(() => self.clients.claim())
-      // Warm in the background. waitUntil keeps the worker alive for the
-      // crawl; clients are already claimed, so nothing is blocked on it.
-      .then(() => warmOnce())
+      // Start the warm in the background, deliberately OUTSIDE waitUntil. A
+      // worker stays in the "activating" state until every promise passed to
+      // activate's waitUntil settles, and the browser holds every fetch event
+      // for its clients — navigations included — until it is "activated". The
+      // paced crawl takes ~30 s (WARM_MAX_ASSETS × WARM_DELAY_MS), so waiting
+      // on it here froze the first navigation after install for that long.
+      // The fetch handler's warmOnce() keeps an interrupted crawl going.
+      .then(() => {
+        void warmOnce();
+      })
   );
 });
 

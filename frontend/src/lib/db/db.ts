@@ -8,13 +8,19 @@
  */
 import { openDB, type IDBPDatabase, type IDBPTransaction } from 'idb';
 import { ENUM_SEEDS, ENUM_SEED_UPDATED_AT, STORES } from './types';
+import { V3_DEFAULTS, V4_DEFAULTS, backfillV3, backfillV4 } from './backfill';
 
 export const DB_NAME = 'planee';
 
-type Migration = (
-  db: IDBPDatabase,
-  tx: IDBPTransaction<unknown, string[], 'versionchange'>
-) => void;
+type UpgradeTx = IDBPTransaction<unknown, string[], 'versionchange'>;
+
+/**
+ * One schema step. May be async, but must await ONLY IndexedDB requests on
+ * `tx`: the upgrade transaction auto-commits as soon as nothing is pending on
+ * it, so awaiting anything else (fetch, a timer, another database) lets it
+ * close under the migration and the next request throws.
+ */
+type Migration = (db: IDBPDatabase, tx: UpgradeTx) => void | Promise<void>;
 
 /**
  * Write an enum store's declared values as rows. Deterministic on purpose: the
@@ -61,6 +67,64 @@ const MIGRATIONS: Migration[] = [
     db.createObjectStore('sync_meta', { keyPath: 'key' });
     db.createObjectStore('sync_outbox', { keyPath: 'key' });
   },
+  // v3 — project names, task titles/types, per-version status and board
+  // position, version description/completion, per-field merge on the four data
+  // stores, the synced asset store, and the lookup indexes. Server side: the
+  // v2 migration in backend/db.go.
+  //
+  // Every structural change is GUARDED. v1 builds stores and indexes from the
+  // CURRENT `STORES` map, so on a fresh install v1 has already created `asset`
+  // and every index below, and an unguarded create throws ConstraintError.
+  // The lists are spelled out rather than read from STORES so this step stays
+  // what it was when it shipped.
+  async (db, tx) => {
+    if (!db.objectStoreNames.contains('asset')) {
+      db.createObjectStore('asset', { keyPath: 'id' });
+    }
+    const indexes: [store: string, index: string][] = [
+      ['version', 'project'],
+      ['task', 'project'],
+      ['version_task', 'version'],
+      ['version_task', 'task'],
+    ];
+    for (const [store, index] of indexes) {
+      const os = tx.objectStore(store);
+      if (!os.indexNames.contains(index)) os.createIndex(index, index, { multiEntry: false });
+    }
+
+    // Backfill rows that predate the new fields, with the same values the
+    // server's ALTER TABLE DEFAULTs give its copies of them — so both sides
+    // agree without a push. Deliberately NOT through repo.ts: no updated_at
+    // restamp (an upgrade is not an edit, and a fresh stamp would beat a real
+    // newer edit on another device) and no outbox entry (nothing changed that
+    // the server does not already have). Tombstones are upgraded too; they
+    // still sync and back up.
+    for (const store of Object.keys(V3_DEFAULTS)) {
+      let cursor = await tx.objectStore(store).openCursor();
+      while (cursor) {
+        const upgraded = backfillV3(store, cursor.value as Record<string, unknown>);
+        if (upgraded) await cursor.update(upgraded);
+        cursor = await cursor.continue();
+      }
+    }
+  },
+  // v4 — preferences.recent_issues_count (how many recent issues Home lists).
+  // Server side: the v3 migration in backend/db.go. No store or index changes,
+  // only a row backfill under the same rules as v3: no restamp, no outbox
+  // entry, tombstones included. Guarded like v3's structural steps: the store
+  // exists on every install that reaches here (v1 or v3 created it), but a
+  // missing store must not abort the whole upgrade.
+  async (db, tx) => {
+    for (const store of Object.keys(V4_DEFAULTS)) {
+      if (!db.objectStoreNames.contains(store)) continue;
+      let cursor = await tx.objectStore(store).openCursor();
+      while (cursor) {
+        const upgraded = backfillV4(store, cursor.value as Record<string, unknown>);
+        if (upgraded) await cursor.update(upgraded);
+        cursor = await cursor.continue();
+      }
+    }
+  },
 ];
 
 export const DB_VERSION = MIGRATIONS.length;
@@ -70,9 +134,24 @@ let dbPromise: Promise<IDBPDatabase> | null = null;
 export function getDB(): Promise<IDBPDatabase> {
   if (!dbPromise) {
     dbPromise = openDB(DB_NAME, DB_VERSION, {
-      upgrade(db, oldVersion, _newVersion, tx) {
-        for (let v = oldVersion; v < MIGRATIONS.length; v++) {
-          MIGRATIONS[v]!(db, tx);
+      // Steps run strictly in order, each awaited, so an async step finishes
+      // before the next one sees the stores. A failing step aborts the whole
+      // upgrade: the database stays at its old version and openDB rejects
+      // (AbortError), rather than committing a half-migrated schema under the
+      // new number. (idb does not await this callback, so the error is
+      // reported here and surfaced through the abort, not rethrown.)
+      async upgrade(db, oldVersion, _newVersion, tx) {
+        try {
+          for (let v = oldVersion; v < MIGRATIONS.length; v++) {
+            await MIGRATIONS[v]!(db, tx);
+          }
+        } catch (err) {
+          console.error('[planee db] migration failed, aborting upgrade', err);
+          try {
+            tx.abort();
+          } catch {
+            // already finished or aborted
+          }
         }
       },
     });

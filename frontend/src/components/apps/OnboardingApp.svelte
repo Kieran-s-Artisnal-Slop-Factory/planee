@@ -1,6 +1,6 @@
 <script lang="ts">
   import Card from '../Card.svelte';
-  import { setSyncMode, setSyncUrl, syncNow, testConnection } from '../../lib/sync';
+  import { isOfflineDefaultBuild, setSyncMode, setSyncUrl, syncNow, testConnection } from '../../lib/sync';
   import { requestPersistentStorage } from '../../lib/db/persistence';
   import { href } from '../../lib/paths';
 
@@ -12,16 +12,33 @@
   let testOk = $state(false);
   let busy = $state(false);
 
+  // A sub-path or offline-default build (GitHub Pages) has no sync server of
+  // its own: same-origin there is a static host, so "empty = same-origin"
+  // would save a sync target where every sync fails. Such a build needs a
+  // server address; a backend-served build keeps empty = same-origin.
+  const browserOnlyBuild = import.meta.env.BASE_URL !== '/' || isOfflineDefaultBuild();
+  const SAME_ORIGIN = import.meta.env.BASE_URL.replace(/\/+$/, '');
+  const urlMissing = $derived(browserOnlyBuild && url.trim() === '');
+  // Browsers block fetches from an https page to an http server (mixed content),
+  // so an http:// URL can never work from an https copy of the app.
+  // (client:only component, so `location` always exists here.)
+  const pageIsHttps = location.protocol === 'https:';
+  const mixedContent = $derived(pageIsHttps && /^http:/i.test(url.trim()));
+
   async function test() {
+    if (urlMissing) return;
     busy = true;
-    const result = await testConnection(url);
+    const result = await testConnection(url.trim() || SAME_ORIGIN);
     testMessage = result.message;
     testOk = result.ok;
     busy = false;
   }
 
   async function finish(mode: 'sync' | 'offline') {
+    if (mode === 'sync' && urlMissing) return;
     busy = true;
+    // Always saved explicitly, both ways: an unset mode falls back to the
+    // build default, which is not necessarily what was chosen here.
     setSyncMode(mode);
     if (mode === 'sync') {
       // Await so any cursor reset lands before the first sync runs.
@@ -47,6 +64,7 @@
     <button
       class="choice"
       class:selected={choice === 'sync'}
+      data-testid="onboarding-choose-sync"
       onclick={() => (choice = 'sync')}
     >
       <strong>Sync with a server</strong>
@@ -55,6 +73,7 @@
     <button
       class="choice"
       class:selected={choice === 'offline'}
+      data-testid="onboarding-choose-offline"
       onclick={() => (choice = 'offline')}
     >
       <strong>Offline only</strong>
@@ -69,16 +88,39 @@
           <label for="ob-url">Server URL</label>
           <input
             id="ob-url"
-            placeholder="http://localhost:8228 (empty = same-origin)"
+            data-testid="onboarding-url"
+            placeholder={browserOnlyBuild ? 'https://planee.example.com' : 'http://localhost:8228 (empty = same-origin)'}
             bind:value={url}
+            required={browserOnlyBuild}
+            aria-describedby={[browserOnlyBuild ? 'ob-url-hint' : '', mixedContent ? 'ob-url-warning' : '']
+              .filter(Boolean)
+              .join(' ') || undefined}
           />
+          {#if browserOnlyBuild}
+            <p id="ob-url-hint" class="muted small">
+              This copy of planee runs entirely in your browser and has no sync server of its own —
+              enter the address of your planee server.
+            </p>
+          {/if}
+          {#if mixedContent}
+            <p id="ob-url-warning" class="warn" role="alert">
+              This page is served over https, so browsers block requests to an <code>http://</code>
+              server (mixed content). Use an <code>https://</code> server URL, or open planee from the
+              backend itself.
+            </p>
+          {/if}
         </div>
         {#if testMessage}
           <p class={testOk ? 'ok' : 'err'}>{testMessage}</p>
         {/if}
         <div class="row">
-          <button class="btn" onclick={test} disabled={busy}>Test connection</button>
-          <button class="btn btn-primary" onclick={() => finish('sync')} disabled={busy}>
+          <button class="btn" onclick={test} disabled={busy || urlMissing}>Test connection</button>
+          <button
+            class="btn btn-primary"
+            data-testid="onboarding-start-sync"
+            onclick={() => finish('sync')}
+            disabled={busy || urlMissing}
+          >
             Start syncing
           </button>
         </div>
@@ -92,7 +134,12 @@
           Settings.
         </p>
         <div class="row">
-          <button class="btn btn-primary" onclick={() => finish('offline')} disabled={busy}>
+          <button
+            class="btn btn-primary"
+            data-testid="onboarding-start-offline"
+            onclick={() => finish('offline')}
+            disabled={busy}
+          >
             Continue offline
           </button>
         </div>
@@ -164,5 +211,19 @@
 
   .muted {
     color: var(--text-muted-color);
+  }
+
+  .small {
+    margin: var(--space-2) 0 0;
+    font-size: var(--font-size-sm);
+  }
+
+  .warn {
+    margin-top: var(--space-2);
+    padding: var(--space-2) var(--space-3);
+    border-left: 3px solid var(--color-warning);
+    background: var(--color-warning-soft);
+    border-radius: var(--radius-sm);
+    font-size: var(--font-size-sm);
   }
 </style>

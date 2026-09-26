@@ -1,0 +1,115 @@
+# Backend checks + frontend type/unit checks + the in-browser, multi-device
+# sync test harness (frontend/tests/sync/).
+#
+# The harness's global-setup builds the production frontend and the Go server
+# + dbdump binaries, then runs the Playwright suite against a real backend. The
+# trust-gate reporter fails the run if the sabotage suite did not execute or
+# missed an injected fault, so this job cannot go green over a broken sync
+# system.
+name: Sync tests
+
+on:
+  pull_request:
+    branches: ["master"]
+    paths: # keep in sync with push.paths below
+      - 'frontend/src/lib/sync.ts'
+      - 'frontend/src/lib/db/**'
+      - 'frontend/src/lib/board/**'
+      - 'frontend/src/components/**'
+      - 'frontend/tests/**'
+      - 'frontend/package*.json'
+      - 'backend/**'
+      - '.github/workflows/sync-tests.yml'
+  push:
+    branches: ["master"]
+    paths:
+      - 'frontend/src/lib/sync.ts'
+      - 'frontend/src/lib/db/**'
+      - 'frontend/src/lib/board/**'
+      - 'frontend/src/components/**'
+      - 'frontend/tests/**'
+      - 'frontend/package*.json'
+      - 'backend/**'
+      - '.github/workflows/sync-tests.yml'
+  schedule:
+    - cron: '0 7 * * *' # nightly full run
+  workflow_dispatch:
+
+concurrency:
+  group: sync-tests-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  backend:
+    name: Backend (vet + test)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: backend/go.mod
+          cache-dependency-path: backend/go.sum
+
+      - name: go vet
+        run: go vet ./...
+
+      - name: go test
+        run: go test ./...
+
+  frontend:
+    name: Frontend (check, unit, sync harness)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '24'
+          cache: 'npm'
+          cache-dependency-path: frontend/package-lock.json
+
+      # The harness's global-setup compiles the Go server and dbdump binaries.
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: backend/go.mod
+          cache-dependency-path: backend/go.sum
+
+      - run: npm ci
+
+      - name: Install Playwright Chromium
+        run: npx playwright install --with-deps chromium
+
+      - name: Type check (astro check + svelte-check)
+        run: npm run check
+
+      - name: Unit tests
+        run: npm run test:unit
+
+      - name: Sync harness (builds frontend + backend, runs suite)
+        run: npm run test:sync
+
+      - name: Upload sync results
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: sync-results
+          path: frontend/tests/sync/.results/
+          if-no-files-found: warn
+
+      - name: Upload Playwright traces on failure
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: playwright-traces
+          path: frontend/test-results/
+          if-no-files-found: ignore

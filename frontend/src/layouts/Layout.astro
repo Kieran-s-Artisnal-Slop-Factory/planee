@@ -1,15 +1,23 @@
 ---
 import '../styles/theme.css';
 import '../styles/global.css';
-import { href } from '../lib/paths';
+import { href, isPath } from '../lib/paths';
 import Navbar from '../components/Navbar.svelte';
+import Fab from '../components/Fab.svelte';
+import CommandPalette from '../components/CommandPalette.svelte';
+import KeybindOverlay from '../components/KeybindOverlay.svelte';
 
 interface Props {
   title: string;
+  /** Show the floating "+" create button (default: every page but onboarding). */
+  fab?: boolean;
 }
 
-const { title } = Astro.props;
+const { title, fab } = Astro.props;
 const currentPath = Astro.url.pathname;
+// Onboarding has nothing to create things into yet (and runs before the app's
+// first-run setup), so it gets neither the FAB nor the palette's create actions.
+const showFab = fab ?? !isPath(currentPath, '/onboarding/');
 // Base-aware paths for the inline scripts / static links below (works whether
 // the app is served at the root or under a sub-path like GitHub Pages).
 const swPath = href('/sw.js');
@@ -71,10 +79,22 @@ const onboardingPath = href('/onboarding/');
         import('../lib/testHook').then((m) => m.installTestHook());
       }
     </script>
+    <script>
+      // App keybinds (D23-D28): ONE capture-phase keydown listener for every
+      // page. Components register what the keys do while they are mounted
+      // (lib/ui/keybinds.ts): the FAB the global create keys, the board its
+      // column and card keys. A hoisted script, so it shares the module (and
+      // its registry) with the islands.
+      import { installKeybinds } from '../lib/ui/keybinds';
+      installKeybinds();
+    </script>
     <Navbar client:load {currentPath} />
-    <main class="page">
+    <main class="page" class:list={[{ 'has-fab': showFab }]}>
       <slot />
     </main>
+    {showFab && <Fab client:only="svelte" />}
+    <CommandPalette client:only="svelte" actions={showFab} />
+    <KeybindOverlay client:only="svelte" />
     {
       import.meta.env.PROD ? (
         <script is:inline>
@@ -109,3 +129,10 @@ const onboardingPath = href('/onboarding/');
     }
   </body>
 </html>
+
+<style>
+  /* Room below the last row so the floating "+" never sits on top of it. */
+  main.page.has-fab {
+    padding-bottom: calc(var(--space-6) + 4rem);
+  }
+</style>

@@ -1,4 +1,5 @@
 dist/
+dist-*/
 .astro/
 node_modules/
 npm-debug.log*
@@ -9,3 +10,5 @@ test-results/
 playwright-report/
 tests/**/.results/
 tests/**/.bin/
+tests/**/.bin-*/
+test-results-*/

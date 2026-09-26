@@ -1,8 +1,17 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { all, patch, put, softDelete, withSyncFields } from '../../lib/db/repo';
-  import type { Version, SyncFields, Project, Task, VersionTask } from '../../lib/db/types';
+  import { all, get, getSingleton, patch, put, softDelete, withSyncFields } from '../../lib/db/repo';
+  import { onChanged } from '../../lib/db/changes';
+  import { recordView } from '../../lib/ui/recent';
+  import { DEFAULT_PRIORITY, DEFAULT_STATUS, DEFAULT_TASK_TYPE } from '../../lib/db/types';
+  import type { Version, SyncFields, Preferences, Project, Task, VersionTask } from '../../lib/db/types';
+  import { changedFields, projectLabel as labelOfProject, taskLabel as labelOfTask } from '../../lib/crud';
   import Card from '../Card.svelte';
+  import MarkdownField from '../markdown/MarkdownField.svelte';
+  import MarkdownCell from '../markdown/MarkdownCell.svelte';
+  import VersionCreateForm from '../forms/VersionCreateForm.svelte';
+
+  type VersionValues = Omit<Version, keyof SyncFields>;
 
   let loading = $state(true);
   let rows: Version[] = $state([]);
@@ -11,28 +20,52 @@
   let version_taskRows: VersionTask[] = $state([]);
   let linked_version_task: string[] = $state([]);
   let newLink_version_task = $state('');
-  let editingId: string | null = $state(null); // null = closed, '' = new row
+  /** The "+ New" form (VersionCreateForm) is open. */
+  let creating = $state(false);
+  let editingId: string | null = $state(null); // null = closed, else the version being edited
+  let editingOriginal: VersionValues | null = null; // the row as it was when Edit was clicked
   let formError: string | null = $state(null);
   let draft = $state(blankDraft());
   let inlineNew = $state({ project: '' });
 
+  let formEl: HTMLFormElement | null = $state(null);
+  /**
+   * True while the description's MarkdownField is open in its editor. The
+   * form's own Save is disabled meanwhile, so submitting cannot close the
+   * form over the unsaved text.
+   * Read from the DOM: the field's Save button exists only while editing.
+   */
+  let markdownEditing = $state(false);
+  $effect(() => {
+    const form = formEl;
+    if (!form) {
+      markdownEditing = false;
+      return;
+    }
+    const check = () => (markdownEditing = form.querySelector('[data-testid="version-description-save"]') !== null);
+    const observer = new MutationObserver(check);
+    observer.observe(form, { childList: true, subtree: true });
+    check();
+    return () => observer.disconnect();
+  });
+
   function blankDraft() {
     return {
-    number: '',
-    project: '',
+      number: '',
+      project: '',
+      description: '',
+      completed: false,
     };
   }
 
   const projectLabel = (id: string | null) =>
-    projectOptions.find((o) => o.id === id)?.description ?? id ?? '';
-  const taskLabel = (id: string | null) =>
-    taskOptions.find((o) => o.id === id)?.description ?? id ?? '';
+    labelOfProject(projectOptions.find((o) => o.id === id)) || (id ?? '');
 
   /** Create a project row in place and select it for project. */
   async function createForFk_project() {
-    const label = inlineNew.project.trim();
-    if (!label) return;
-    const created = await put('project', withSyncFields({ description: label, version: '' }));
+    const name = inlineNew.project.trim();
+    if (!name) return;
+    const created = await put('project', withSyncFields({ name, description: '' }));
     projectOptions = await all<Project>('project');
     draft.project = created.id;
     inlineNew.project = '';
@@ -44,11 +77,27 @@
       : [...linked_version_task, targetId];
   }
 
-  /** Create a task row in place and link it. */
+  /**
+   * Create a task row in place and link it. The task belongs to the project
+   * this version is for — never '' (an orphan row the server stores and every
+   * device then carries) — so the button stays disabled until a project is
+   * selected.
+   */
   async function createLink_version_task() {
-    const label = newLink_version_task.trim();
-    if (!label) return;
-    const created = await put('task', withSyncFields({ project: '', description: label, priority: 3, subtasks: null }));
+    const title = newLink_version_task.trim();
+    if (!title || !draft.project) return;
+    const prefs = await getSingleton<Preferences>('preferences');
+    const created = await put(
+      'task',
+      withSyncFields<Omit<Task, keyof SyncFields>>({
+        project: draft.project,
+        title,
+        task_type: prefs?.default_task_type ?? DEFAULT_TASK_TYPE,
+        description: null,
+        priority: DEFAULT_PRIORITY,
+        subtasks: null,
+      })
+    );
     taskOptions = await all<Task>('task');
     linked_version_task = [...linked_version_task, created.id];
     newLink_version_task = '';
@@ -64,7 +113,7 @@
     const current = live.filter((r) => r.version === ownerId);
     for (const targetId of linked_version_task) {
       if (!current.some((r) => r.task === targetId)) {
-        await put('version_task', withSyncFields({ version: ownerId, task: targetId }));
+        await put('version_task', withSyncFields({ version: ownerId, task: targetId, status: DEFAULT_STATUS, position: 0 }));
       }
     }
     for (const r of current) {
@@ -81,60 +130,99 @@
     version_taskRows = await all<VersionTask>('version_task');
   }
 
-  onMount(async () => {
-    await refresh();
-    loading = false;
+  onMount(() => {
+    // Live: rows created elsewhere (the FAB, another tab, a sync) show up here.
+    // refresh only reads, so it never touches an open edit form's draft.
+    const stop = onChanged(['version', 'project', 'task', 'version_task'], () => void refresh());
+    void refresh().then(() => (loading = false));
+    return stop;
   });
 
   function startCreate() {
-    draft = blankDraft();
-    linked_version_task = [];
-    formError = null;
-    editingId = '';
+    editingId = null;
+    creating = true;
+  }
+
+  function toValues(d: ReturnType<typeof blankDraft>): VersionValues {
+    return {
+      number: d.number.trim(),
+      project: d.project,
+      description: d.description === '' ? null : d.description,
+      completed: d.completed,
+    };
   }
 
   function startEdit(row: Version) {
     draft = {
       number: row.number ?? '',
       project: row.project ?? '',
+      description: row.description ?? '',
+      completed: row.completed === true,
+    };
+    // The row's REAL values (a null description stays null), so opening and
+    // saving an untouched form patches nothing.
+    editingOriginal = {
+      number: row.number,
+      project: row.project,
+      description: row.description ?? null,
+      completed: row.completed === true,
     };
     linked_version_task = version_taskRows
       .filter((r) => r.version === row.id)
       .map((r) => r.task);
     formError = null;
+    creating = false;
     editingId = row.id;
+    recordView('version', row.id);
+  }
+
+  /** An existing row's description: its own Save patches just that field, straight away (D10). */
+  async function saveDescription(md: string) {
+    const id = editingId;
+    if (!id) return;
+    const description = md === '' ? null : md;
+    const saved = await patch<Version>('version', id, { description });
+    if (!saved) throw new Error('That row was deleted somewhere else — nothing was saved.');
+    draft.description = md;
+    if (editingOriginal) editingOriginal.description = description;
+    await refresh();
+  }
+
+  /** The stored description right now, so a concurrent change is caught before it is overwritten. */
+  async function freshDescription() {
+    const row = editingId ? await get<Version>('version', editingId) : undefined;
+    if (!row) throw new Error('That row was deleted somewhere else — nothing was saved.');
+    return row.description ?? '';
   }
 
   async function save(e: SubmitEvent) {
     e.preventDefault();
     formError = null;
-    let values: Omit<Version, keyof SyncFields>;
-    try {
-      values = {
-      number: draft.number,
-      project: draft.project,
-      };
-    } catch (err) {
-      formError = 'Invalid JSON: ' + (err instanceof Error ? err.message : String(err));
+    if (markdownEditing) {
+      formError = 'Save or cancel the description first.';
       return;
     }
-    let savedId: string;
-    if (editingId) {
-      // patch() re-reads the row from the store and changes ONLY these fields.
-      // Writing `{ ...rowFromTheList, ...values }` instead would push the
-      // component's snapshot back over anything that changed underneath it —
-      // an edit pulled from another device, a change made in another tab —
-      // and that reversion then propagates as if it were deliberate.
-      const saved = await patch<Version>('version', editingId, values);
+    const values = toValues(draft);
+    if (!values.number || !values.project) {
+      formError = 'A version needs a number and a project.';
+      return;
+    }
+    const savedId = editingId;
+    if (!savedId) return;
+    // patch() re-reads the row from the store and changes ONLY the fields
+    // named — and only the fields the user changed are named, so an
+    // untouched field keeps its per-field stamp and a concurrent edit to it
+    // on another device still wins.
+    const changes: Partial<VersionValues> = editingOriginal ? changedFields(editingOriginal, values) : { ...values };
+    // The description is not this button's: its MarkdownField saved it already.
+    delete changes.description;
+    if (Object.keys(changes).length > 0) {
+      const saved = await patch<Version>('version', savedId, changes);
       if (!saved) {
         formError = 'That row was deleted somewhere else — nothing was saved.';
         await refresh();
         return;
       }
-      savedId = editingId;
-    } else {
-      const created = await put('version', withSyncFields(values));
-      savedId = created.id;
     }
     await syncLinks_version_task(savedId);
     editingId = null;
@@ -153,24 +241,38 @@
   <button class="btn btn-primary" data-testid="version-new" onclick={startCreate}>+ New</button>
 </div>
 
+{#if creating}
+  <Card title="New version">
+    <VersionCreateForm
+      autofocus
+      onCreated={() => {
+        creating = false;
+        void refresh();
+      }}
+      onCancel={() => (creating = false)}
+    />
+  </Card>
+{/if}
+
 {#if editingId !== null}
-  <Card title={editingId ? 'Edit' : 'New version'}>
-    <form class="stack" onsubmit={save}>
+  {#key editingId}
+  <Card title="Edit">
+    <form class="stack" onsubmit={save} bind:this={formEl}>
       <div>
         <label for="f-number">Number</label>
-        <input id="f-number" bind:value={draft.number} required />
+        <input id="f-number" bind:value={draft.number} placeholder="0.1.0" required />
       </div>
       <div>
         <label for="f-project">Project</label>
         <select id="f-project" bind:value={draft.project} required>
           <option value="" disabled>Select…</option>
           {#each projectOptions as opt (opt.id)}
-            <option value={opt.id}>{opt.description}</option>
+            <option value={opt.id}>{labelOfProject(opt)}</option>
           {/each}
         </select>
         <div class="inline-new">
           <input
-            placeholder="New project description"
+            placeholder="New project name"
             bind:value={inlineNew.project}
           />
           <button
@@ -183,8 +285,26 @@
           </button>
         </div>
       </div>
+      <div class="md-box">
+        <MarkdownField
+          label="Description"
+          testid="version-description"
+          value={draft.description}
+          placeholder="No description yet."
+          minHeight="8rem"
+          onSave={saveDescription}
+          getFresh={freshDescription}
+        />
+        <p class="hint md-note">Saved on its own with its Save button.</p>
+      </div>
       <div>
-        <label>Task</label>
+        <label class="check">
+          <input type="checkbox" data-testid="version-completed" bind:checked={draft.completed} />
+          Completed
+        </label>
+      </div>
+      <div>
+        <label>Tasks</label>
         {#if taskOptions.length === 0}
           <p class="muted">No task yet — create one below.</p>
         {/if}
@@ -196,17 +316,18 @@
                 checked={linked_version_task.includes(opt.id)}
                 onchange={() => toggleLink_version_task(opt.id)}
               />
-              {opt.description}
+              {labelOfTask(opt)}
             </label>
           {/each}
         </div>
         <div class="inline-new">
-          <input placeholder="New task description" bind:value={newLink_version_task} />
+          <input placeholder="New task title" bind:value={newLink_version_task} />
           <button
             type="button"
             class="btn btn-sm"
             onclick={createLink_version_task}
-            disabled={!newLink_version_task.trim()}
+            disabled={!newLink_version_task.trim() || !draft.project}
+            title={draft.project ? undefined : 'Select a project first'}
           >
             + Create & link
           </button>
@@ -216,11 +337,15 @@
         <p class="form-error">{formError}</p>
       {/if}
       <div class="row">
-        <button class="btn btn-primary" data-testid="version-save" type="submit">Save</button>
+        <button class="btn btn-primary" data-testid="version-save" type="submit" disabled={markdownEditing}>Save</button>
         <button class="btn" type="button" onclick={() => (editingId = null)}>Cancel</button>
+        {#if markdownEditing}
+          <span class="hint">Save or cancel the description first.</span>
+        {/if}
       </div>
     </form>
   </Card>
+  {/key}
 {/if}
 
 {#if loading}
@@ -234,6 +359,8 @@
         <tr>
           <th>Number</th>
           <th>Project</th>
+          <th>Description</th>
+          <th>Completed</th>
           <th></th>
         </tr>
       </thead>
@@ -242,6 +369,14 @@
           <tr data-testid="version-row" data-row-id={row.id}>
             <td>{row.number ?? ''}</td>
             <td>{projectLabel(row.project)}</td>
+            <td><MarkdownCell markdown={row.description} testid="version-description-cell" /></td>
+            <td>
+              {#if row.completed}
+                <span class="badge badge-done">Completed</span>
+              {:else}
+                <span class="badge">Open</span>
+              {/if}
+            </td>
             <td class="actions">
               <button class="btn btn-sm" data-testid="version-edit" onclick={() => startEdit(row)}>Edit</button>
               <button class="btn btn-sm btn-danger" data-testid="version-delete" onclick={() => del(row)}>Delete</button>
@@ -260,9 +395,14 @@
     justify-content: flex-end;
   }
 
-  .mono {
-    font-family: ui-monospace, monospace;
-    font-size: var(--font-size-sm);
+  .md-box {
+    padding: var(--space-3);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-md);
+  }
+
+  .md-note {
+    margin: var(--space-2) 0 0;
   }
 
   .form-error {

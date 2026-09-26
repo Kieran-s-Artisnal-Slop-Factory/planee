@@ -58,13 +58,17 @@ See [DEPLOYMENT.md](DEPLOYMENT.md) for the full pipeline (tags, GHCR setup, back
 
 ## Evolving the schema
 
-The schema lives in four places that must change together:
+The schema lives in five places that must change together:
 
-1. `backend/sql/schema.sql` — the DDL (applied to fresh databases only).
+1. `backend/sql/schema.sql` — the full DDL for fresh databases, plus a new
+   step appended to `migrations` in `backend/db.go` for existing ones (see
+   `backend/README.md` › Evolving the schema).
 2. `backend/sync.go` — `tableOrder` + `tables` metadata.
 3. `frontend/src/lib/db/types.ts` + a new migration appended in
    `frontend/src/lib/db/db.ts`.
-4. `frontend/tests/sync/helpers/schema.ts` — the test harness keeps its own
+4. `frontend/src/lib/db/backfill.ts` — when existing rows need the new
+   fields filled in (shared by the IndexedDB migration and old-backup import).
+5. `frontend/tests/sync/helpers/schema.ts` — the test harness keeps its own
    mirror of the schema on purpose, so it cannot inherit a drift in the app's.
 
 Enum tables (`task_type`, `status_type`) are reference data, not user rows: their values are

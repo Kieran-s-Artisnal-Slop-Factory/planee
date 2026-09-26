@@ -34,7 +34,7 @@ Plus two structural checks on every converged database: `assertInvariants`
 delta across every store must be exactly that change. Most real data loss shows
 up in the isolation diff, not in the targeted assertion.
 
-**A sabotage suite.** `sabotage.spec.ts` injects twelve known faults and
+**A sabotage suite.** `sabotage.spec.ts` injects fourteen known faults and
 requires the oracle to catch each one. `trust-gate.ts` fails the whole run if
 that suite did not execute, so a filtered or accidentally-empty run is reported
 `NOT TRUSTWORTHY` rather than green.

@@ -19,25 +19,40 @@ export interface SyncFields {
 }
 
 export interface Project extends SyncFields {
-  description: string;
-  version: string;
+  name: string;
+  description: string; // markdown
 }
 
 export interface Version extends SyncFields {
-  number: string;
+  number: string; // semver
   project: string; // FK -> project.id
+  description: string | null; // markdown
+  completed: boolean;
 }
 
 export interface Task extends SyncFields {
   project: string; // FK -> project.id
-  description: string | null;
-  priority: number;
-  subtasks: string | null;
+  title: string;
+  task_type: TaskTypeKey; // FK -> task_type.id
+  description: string | null; // markdown
+  priority: number; // one of PRIORITY_VALUES (1 Urgent .. 4 Low)
+  subtasks: string | null; // markdown checklist
 }
 
+/** A task scheduled in a version; status and board order are per version. */
 export interface VersionTask extends SyncFields {
   version: string; // FK -> version.id
   task: string; // FK -> task.id
+  status: StatusTypeKey; // FK -> status_type.id
+  position: number; // REAL: order within the status column
+}
+
+/** An image or drawing referenced from markdown as `assets/<id>.<ext>`. */
+export interface Asset extends SyncFields {
+  name: string;
+  mime: string;
+  size: number; // bytes, before base64
+  data: string; // base64 of the bytes
 }
 
 /** Enum row — one of TASK_TYPE_VALUES; `id` is the value key. */
@@ -49,7 +64,11 @@ export interface TaskType extends SyncFields {
 
 export interface Preferences extends SyncFields {
   default_task_type: TaskTypeKey; // FK -> task_type.id
+  recent_issues_count: number; // how many recent issues Home lists
 }
+
+/** Default for Preferences.recent_issues_count (and the DDL default). */
+export const DEFAULT_RECENT_ISSUES_COUNT = 6;
 
 /** Enum row — one of STATUS_TYPE_VALUES; `id` is the value key. */
 export interface StatusType extends SyncFields {
@@ -77,10 +96,11 @@ export interface StoreDef {
 }
 
 export const STORES: Record<string, StoreDef> = {
-  project: { indexes: [] },
-  version: { indexes: [] },
-  task: { indexes: [] },
-  version_task: { indexes: [] },
+  project: { indexes: [], fieldMerge: true },
+  version: { indexes: [{ name: 'project' }], fieldMerge: true },
+  task: { indexes: [{ name: 'project' }], fieldMerge: true },
+  version_task: { indexes: [{ name: 'version' }, { name: 'task' }], fieldMerge: true },
+  asset: { indexes: [] },
   task_type: { indexes: [], enum: true },
   preferences: { indexes: [], fieldMerge: true, singleton: true },
   status_type: { indexes: [], enum: true },
@@ -118,6 +138,12 @@ export const TASK_TYPE_VALUES = [
 
 export type TaskTypeKey = (typeof TASK_TYPE_VALUES)[number]['key'];
 
+/**
+ * task.task_type when nothing better is known (matches the column DEFAULT in
+ * schema.sql). The UI should prefer preferences.default_task_type.
+ */
+export const DEFAULT_TASK_TYPE: TaskTypeKey = 'feature';
+
 /** Values of the status_type enum, in display order (index = position). */
 export const STATUS_TYPE_VALUES = [
   { key: "todo", label: "TODO" },
@@ -129,6 +155,36 @@ export const STATUS_TYPE_VALUES = [
 ] as const satisfies readonly EnumSeed[];
 
 export type StatusTypeKey = (typeof STATUS_TYPE_VALUES)[number]['key'];
+
+/** version_task.status for a newly scheduled task (matches the column DEFAULT). */
+export const DEFAULT_STATUS: StatusTypeKey = 'todo';
+
+/**
+ * Statuses that count as finished: they sit in the board's Done column, and a
+ * version whose links are all in one of these has no open work. `done` is what
+ * a drag to Done writes; the other three are resolutions picked explicitly.
+ */
+export const DONE_STATUSES: StatusTypeKey[] = ['done', 'wontfix', 'out_of_scope', 'bumped'];
+
+export function isDoneStatus(status: string): boolean {
+  return (DONE_STATUSES as string[]).includes(status);
+}
+
+/**
+ * task.priority values, most urgent first. Stored as the number; not an enum
+ * table because the order IS the value.
+ */
+export const PRIORITY_VALUES = [
+  { value: 1, label: 'Urgent' },
+  { value: 2, label: 'High' },
+  { value: 3, label: 'Medium' },
+  { value: 4, label: 'Low' },
+] as const;
+
+export type Priority = (typeof PRIORITY_VALUES)[number]['value'];
+
+/** The priority a new task gets (matches task.priority's DEFAULT in schema.sql). */
+export const DEFAULT_PRIORITY: Priority = 4;
 
 /**
  * Seed rows for every enum store, keyed by store name. db.ts writes these in

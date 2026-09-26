@@ -1,10 +1,11 @@
 import { test, expect } from './helpers/devices';
 import type { Device } from './helpers/devices';
 import { assertConverged, assertFieldEverywhere, assertInvariants, capture } from './helpers/oracle';
-import { SYNCED_TABLES, buildRow, sampleValue, tableOf } from './helpers/schema';
+import { SYNCED_TABLES, buildRow, sampleValue, seedParents, tableOf } from './helpers/schema';
+import { CONCURRENT, assertDragWhileRenaming, dragWhileRenaming } from './helpers/board';
 
 /**
- * The trust gate: twelve deliberate faults, each of which the oracle MUST
+ * The trust gate: fourteen deliberate faults, each of which the oracle MUST
  * catch. Until this suite is green, no other green in this run means anything —
  * a harness that has never been shown to fail is unverified, not passing.
  *
@@ -38,18 +39,25 @@ test('sabotage: a store dropped from the push is detected', async ({ deviceA, de
 });
 
 test('sabotage: a field nulled on the wire is detected', async ({ deviceA, deviceB, backend }) => {
-  const col = table.columns.find((c) => c.nullable && !c.references);
-  test.skip(!col, 'no nullable non-FK column on ' + T);
+  // Any table with a nullable non-FK column will do. Skipping when the default
+  // table lacks one silently shrinks the trust gate, so search them all; a
+  // schema with no nullable column anywhere is the only legitimate miss.
+  const target = SYNCED_TABLES.find((t) => !t.singleton && t.columns.some((c) => c.nullable && !c.references));
+  expect(target, 'no synced table has a nullable non-FK column to sabotage').toBeDefined();
+  const nulled = target!;
+  const col = nulled.columns.find((c) => c.nullable && !c.references);
   const intended = sampleValue(col!, 1);
-  await deviceA.call('repoPut', T, { ...buildRow(table, 's2', {}, 1), [col!.name]: intended });
+  // Parents first, so the row is valid apart from the injected fault.
+  const parents = await seedParents(nulled, 's2', async (store, row) => {
+    await deviceA.call('repoPut', store, row);
+  });
+  await deviceA.call('repoPut', nulled.name, { ...buildRow(nulled, 's2', parents, 1), [col!.name]: intended });
 
   await deviceA.page.route('**/sync/push', async (route) => {
     const body = JSON.parse(route.request().postData() ?? '{}') as {
       rows: Record<string, Record<string, unknown>[]>;
     };
-    for (const rows of Object.values(body.rows ?? {})) {
-      for (const row of rows) row[col!.name] = null;
-    }
+    for (const row of body.rows?.[nulled.name] ?? []) row[col!.name] = null;
     await route.continue({ postData: JSON.stringify(body) });
   });
   await deviceA.sync();
@@ -61,7 +69,7 @@ test('sabotage: a field nulled on the wire is detected', async ({ deviceA, devic
   // All four legs now AGREE — on the erased value. Convergence alone is fooled;
   // only the intended-value check sees it, which is why every field case in
   // field-matrix.spec.ts asserts against the value the test meant to write.
-  expect(() => assertFieldEverywhere(legs, T, 's2', col!.name, intended)).toThrow();
+  expect(() => assertFieldEverywhere(legs, nulled.name, 's2', col!.name, intended)).toThrow();
 });
 
 test('sabotage: a retyped value is detected', async ({ deviceA, deviceB, backend }) => {
@@ -195,4 +203,78 @@ test('sabotage: one unstorable row does not stop the rest of the batch', async (
   // ...and the poison row does not make every later push fail.
   const again = await deviceA.sync();
   expect(again.ok).toBe(true);
+});
+
+test('sabotage: server treats version_task as whole-row LWW', async ({ deviceA, deviceB, backend }) => {
+  // Whole-row last-write-wins, wherever it happens, looks like this from the
+  // outside: the later write carries every field, so an earlier concurrent
+  // edit to a DIFFERENT field is lost. Injected here the way it happens for
+  // real — a client that saves a whole version_task row from a stale UI
+  // snapshot (put, not patch), which stamps every field with "now". The
+  // per-field concurrency assertion must see A's status edit disappear.
+  const vt = tableOf('version_task');
+  const id = 's13';
+  const parents = await seedParents(vt, id, async (store, row) => {
+    await deviceA.call('repoPut', store, row);
+  });
+  await deviceA.call('repoPut', 'version_task', { ...buildRow(vt, id, parents, 0), status: 'todo', position: 1 });
+  await deviceA.sync();
+  await deviceB.sync();
+
+  // B renders the row, then A moves the card to in_progress and syncs.
+  const staleOnB = (await deviceB.get('version_task', id))!;
+  await deviceA.call('repoPatch', 'version_task', id, { status: 'in_progress' });
+  await deviceA.sync();
+
+  // B saves its (stale) snapshot with a new position: every field re-stamped
+  // with now — strictly after A's edit, which completed a push round trip ago.
+  const at = new Date().toISOString();
+  const stamps = Object.fromEntries(vt.columns.map((c) => [c.name, at]));
+  await deviceB.call('rawPut', 'version_task', {
+    ...staleOnB,
+    position: 2,
+    updated_at: at,
+    field_updated_at: { ...stamps, deleted_at: at },
+  });
+  await deviceB.call('enqueue', 'version_task', id, at);
+  await deviceB.sync();
+  await deviceA.sync();
+
+  const legs = await capture(deviceA, deviceB, backend);
+  // Everyone agrees — on the clobbered row. Only the intended value notices.
+  assertConverged(legs, ['version_task']);
+  assertFieldEverywhere(legs, 'version_task', id, 'position', 2);
+  expect(() => assertFieldEverywhere(legs, 'version_task', id, 'status', 'in_progress')).toThrow();
+});
+
+test('sabotage: the board saving a stale whole-card snapshot over a UI drag is detected', async ({
+  deviceA,
+  deviceB,
+  backend,
+}) => {
+  // The UI twin of the case above, on board-ui.spec.ts's real flow: A drags
+  // the card to Done on its board while B renames it with the inline editor.
+  // The fault is the board B would be running if its adapter saved the card
+  // it was SHOWING — `put` of the whole version_task from its pre-drag render,
+  // every field stamped now — instead of `patch`ing the one field the reader
+  // changed. The drag is then reverted everywhere, and the case's own
+  // assertion chain (assertDragWhileRenaming) has to say so.
+  const vt = tableOf('version_task');
+  const run = await dragWhileRenaming(deviceA, deviceB, backend, async (staleLinkOnB) => {
+    const at = new Date().toISOString();
+    const stamps = Object.fromEntries(vt.columns.map((c) => [c.name, at]));
+    await deviceB.call('rawPut', 'version_task', {
+      ...staleLinkOnB,
+      updated_at: at,
+      field_updated_at: { ...stamps, deleted_at: at },
+    });
+    await deviceB.call('enqueue', 'version_task', CONCURRENT.link, at);
+  });
+
+  // The fault is exactly the lost drag: everyone agrees, the rename survived...
+  assertConverged(run.legs);
+  assertFieldEverywhere(run.legs, 'task', CONCURRENT.task, 'title', CONCURRENT.renamed);
+  assertFieldEverywhere(run.legs, 'version_task', CONCURRENT.link, 'status', 'todo');
+  // ...and the UI case's oracle refuses it.
+  expect(() => assertDragWhileRenaming(run)).toThrow();
 });

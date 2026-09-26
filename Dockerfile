@@ -25,7 +25,7 @@ RUN CGO_ENABLED=0 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH:-amd64} \
     go build -trimpath -ldflags="-s -w" -o /planee .
 
 # --- final image
-FROM alpine:3.20
+FROM alpine:3.24
 WORKDIR /srv
 # curl is only for the healthcheck; drop it if you don't use one.
 RUN apk add --no-cache curl

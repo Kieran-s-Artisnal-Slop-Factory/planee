@@ -1,15 +1,115 @@
-- [ ] Add your first task here
+# Version 0.1.0 plans
+
+Before beginning make sure the VERSION is up to date, and create a file called `docs/dev/plans/version-<version number>-phased.md` which is a phased plan for implementing the features, then stop after creating it. If that file exists, the that means the version has been started and you're taking over from where another agent left off. If it doesn't then create the file making sure to also create "checkpoints" which are points after a few phases where the full test suite is ran, and must pass before proceeding. You don't need to run the full tests on every phase because it's going to be too slow. For each checkpoint, if it's not going to trample one another, feel free to use subagents, in fact ideally you should.
+
+Additional things to keep in mind:
+- Usability takes priority over accessibilty when the two collide. This app is a personal app, primarily used by me, not one being shared with people who have accessibility needs. It's nice for it to be usable, but not at the cost of functionality or performance.
+- When documenting features, in the `dev` docs be sure to include mermaid diagrams, and code references to make it clear and simple for people to find what they need to understand.
+
+## Maintenance
+
+- [x] Check all dependencies and do updates
+  - [x] Frontend
+  - [x] Backend
+  - [x] CI
+
+## Features & fixes
+
+- [x] Port kanban board from retoken
+- [x] Create backend connection so updates are persisted across from frontend to backend
+- [x] Copy the github pages deploy template from retemplate (retemplate's own `pages.yml` is no-build; adapted local-sync-template's Astro Pages workflow instead)
+- [x] Home & navigation redesign (plan Phase 10b, D16–D20)
+  - [x] Home: remove Tables, show the /board UI; recently added/updated/viewed issues (count in preferences, default 6); remove New project UI
+  - [x] Menu: remove Version task, Task, Board, Project, Version, Assets
+  - [x] FAB: New Task / New Version / New Project (create UIs from /task, /version, /project)
+  - [x] Ctrl+K command palette: create actions, recent tasks/projects/versions, overview pages
+- [x] Port the editor from notey (math dialog, keyboard controls, all features) as a replacement for the current editor (plan Phase 10c, D21–D22)
+- [x] Keybinds on every page with a Ctrl-hold overlay (plan Phase 10c, D23–D28)
+  - [x] Home: Ctrl+1/2/3 new task in column, Ctrl+Shift+1/2/3 focus column, card keys (Tab/PgDn, Shift+Tab/PgUp, Ctrl+E, Ctrl+arrows), Ctrl+4 project picker, Ctrl+Shift+C complete, Ctrl+Shift+E edit version
+  - [x] Global: Ctrl+Enter + menu, Ctrl+N new task, Ctrl+Shift+P new project, Ctrl+Shift+V new version
+- [ ] Dev + user documentation for 0.1.0 (Phase 11 of the plan)
+
+## For human
+
+This section is for me to keep track of what I need to manually review, feel free to add to this
+
+- [x] Review `docs/dev/plans/version-0.1.0-phased.md` decisions (answered 2026-09-13, recorded as D1–D15)
+- [ ] Work is on branch `version-0.1.0` (one commit per checkpoint); merge into `master` when happy
+- [ ] No git remote is configured; workflows assume `master` and `descent098/planee` (git metadata lists `main` as the main branch)
+- [ ] Local Go is 1.24.5 but `backend/go.mod` requires 1.25 (toolchain auto-download covers it; consider upgrading). Go 1.25 is past upstream support; `golang:1.26-alpine` works without a go.mod change
+- [ ] Enable GitHub Pages (Settings → Pages → Source: GitHub Actions) once pushed; first `pages.yaml` run also proves `npm ci` works on Linux
+- [ ] Try the board by hand: drag on desktop and touch, keyboard moves, dark mode, drawings (Excalidraw) and mermaid in descriptions
+- [ ] `npm audit` reports 9 transitive advisories via mermaid/Excalidraw (lodash-es, nanoid): no fix without upstream releases
+- [ ] Known board rough edges: a bumped card keeps its old position (may sort to the top of Done); the card dialog's resolution/bump controls reflect the stored status for ~one reload cycle right after a drag; bump/complete are several writes, not one transaction
+- [ ] Crepe's WYSIWYG mode rewrites image alt text to a size ratio (`![1.00](assets/…)`); Source mode keeps it
+- [ ] Google Fonts (theme typography) load from an external host, so they fall back offline
+- [ ] Try the redesign by hand: + button on phone widths (does it cover the board?), Ctrl+K on macOS (Cmd+K), recent-issues strip density with long titles
+- [ ] Try the new editor + keys by hand: formula dialog & matrix picker, double-click formula edit, Excalidraw/mermaid inside a card, hold Ctrl on Home (badge placement, cheat sheet in light/dark), Ctrl+arrows on focused cards
+- [ ] Install planee as an app (Chrome/Edge) to get Ctrl+N and Ctrl+Shift+P; in a normal tab use Alt+N / Alt+Shift+P
+- [ ] Known editor limits (from notey): Escape in the rich canvas selects the block instead of cancelling the edit (use Source mode or the Cancel button); a price and a formula on one line (`Pay $5 for $x^2# Version 0.1.0 plans
+
+Before beginning make sure the VERSION is up to date, and create a file called `docs/dev/plans/version-<version number>-phased.md` which is a phased plan for implementing the features, then stop after creating it. If that file exists, the that means the version has been started and you're taking over from where another agent left off. If it doesn't then create the file making sure to also create "checkpoints" which are points after a few phases where the full test suite is ran, and must pass before proceeding. You don't need to run the full tests on every phase because it's going to be too slow. For each checkpoint, if it's not going to trample one another, feel free to use subagents, in fact ideally you should.
+
+Additional things to keep in mind:
+- Usability takes priority over accessibilty when the two collide. This app is a personal app, primarily used by me, not one being shared with people who have accessibility needs. It's nice for it to be usable, but not at the cost of functionality or performance.
+- When documenting features, in the `dev` docs be sure to include mermaid diagrams, and code references to make it clear and simple for people to find what they need to understand.
+
+## Maintenance
+
+- [x] Check all dependencies and do updates
+  - [x] Frontend
+  - [x] Backend
+  - [x] CI
+
+## Features & fixes
+
+- [x] Port kanban board from retoken
+- [x] Create backend connection so updates are persisted across from frontend to backend
+- [x] Copy the github pages deploy template from retemplate (retemplate's own `pages.yml` is no-build; adapted local-sync-template's Astro Pages workflow instead)
+- [x] Home & navigation redesign (plan Phase 10b, D16–D20)
+  - [x] Home: remove Tables, show the /board UI; recently added/updated/viewed issues (count in preferences, default 6); remove New project UI
+  - [x] Menu: remove Version task, Task, Board, Project, Version, Assets
+  - [x] FAB: New Task / New Version / New Project (create UIs from /task, /version, /project)
+  - [x] Ctrl+K command palette: create actions, recent tasks/projects/versions, overview pages
+- [x] Port the editor from notey (math dialog, keyboard controls, all features) as a replacement for the current editor (plan Phase 10c, D21–D22)
+- [x] Keybinds on every page with a Ctrl-hold overlay (plan Phase 10c, D23–D28)
+  - [x] Home: Ctrl+1/2/3 new task in column, Ctrl+Shift+1/2/3 focus column, card keys (Tab/PgDn, Shift+Tab/PgUp, Ctrl+E, Ctrl+arrows), Ctrl+4 project picker, Ctrl+Shift+C complete, Ctrl+Shift+E edit version
+  - [x] Global: Ctrl+Enter + menu, Ctrl+N new task, Ctrl+Shift+P new project, Ctrl+Shift+V new version
+- [ ] Dev + user documentation for 0.1.0 (Phase 11 of the plan)
+
+## For human
+
+This section is for me to keep track of what I need to manually review, feel free to add to this
+
+- [x] Review `docs/dev/plans/version-0.1.0-phased.md` decisions (answered 2026-09-13, recorded as D1–D15)
+- [ ] Work is on branch `version-0.1.0` (one commit per checkpoint); merge into `master` when happy
+- [ ] No git remote is configured; workflows assume `master` and `descent098/planee` (git metadata lists `main` as the main branch)
+- [ ] Local Go is 1.24.5 but `backend/go.mod` requires 1.25 (toolchain auto-download covers it; consider upgrading). Go 1.25 is past upstream support; `golang:1.26-alpine` works without a go.mod change
+- [ ] Enable GitHub Pages (Settings → Pages → Source: GitHub Actions) once pushed; first `pages.yaml` run also proves `npm ci` works on Linux
+- [ ] Try the board by hand: drag on desktop and touch, keyboard moves, dark mode, drawings (Excalidraw) and mermaid in descriptions
+- [ ] `npm audit` reports 9 transitive advisories via mermaid/Excalidraw (lodash-es, nanoid): no fix without upstream releases
+- [ ] Known board rough edges: a bumped card keeps its old position (may sort to the top of Done); the card dialog's resolution/bump controls reflect the stored status for ~one reload cycle right after a drag; bump/complete are several writes, not one transaction
+- [ ] Crepe's WYSIWYG mode rewrites image alt text to a size ratio (`![1.00](assets/…)`); Source mode keeps it
+- [ ] Google Fonts (theme typography) load from an external host, so they fall back offline
+- [ ] Try the redesign by hand: + button on phone widths (does it cover the board?), Ctrl+K on macOS (Cmd+K), recent-issues strip density with long titles
+) both stay text — write the price as `$5`
+- [ ] Escape in a FAB create dialog closes it even when fields are filled (only an open markdown editor blocks it); consider a "discard?" prompt
+
+## Per change
 
 Ensure for each change:
 
 - if data model is updated
     - There are no sync issues/regressions with the changes
     - The schema is updated in every place it lives, together:
-        1. `backend/sql/schema.sql` — the DDL (applied to fresh databases only).
+        1. `backend/sql/schema.sql` — the DDL (applied to fresh databases only),
+           AND a new step appended to `migrations` in `backend/db.go` for
+           existing databases (never edit a shipped step).
         2. `backend/sync.go` — `tableOrder` + `tables` metadata.
         3. `frontend/src/lib/db/types.ts` — entity interfaces + store map.
         4. A new migration appended in `frontend/src/lib/db/db.ts` (never edit
-           a shipped migration).
+           a shipped migration), with any row backfill in
+           `frontend/src/lib/db/backfill.ts` (also used by old-backup import).
         5. `frontend/tests/sync/helpers/schema.ts` — the harness's own schema
            mirror, so `field-matrix.spec.ts` keeps covering every column.
       A NEW table also needs its page (`frontend/src/pages/<table>.astro` +

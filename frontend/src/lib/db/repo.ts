@@ -19,12 +19,16 @@
  * only automatic sync is on page load, so a change made here stays invisible to
  * other devices for minutes — the most-reported local-first symptom — and every
  * conflict window stays open far longer than it needs to.
+ *
+ * …and with notifyChanged([store]) (changes.ts), so open views in this tab and
+ * in other tabs re-read what changed.
  */
 import { getDB } from './db';
 import { enqueueIn, OUTBOX_STORE } from './outbox';
 import { STORES } from './types';
 import type { StoreName, SyncFields } from './types';
 import { requestSync } from '../sync';
+import { notifyChanged } from './changes';
 
 export const newId = (): string => crypto.randomUUID();
 export const nowIso = (): string => new Date().toISOString();
@@ -70,20 +74,45 @@ export function withSyncFields<T extends object>(fields: T): T & SyncFields {
 /**
  * Stamp `at` against the named fields on a field-merged store, preserving
  * every other field's existing stamp. No-op on ordinary stores.
+ *
+ * Row bookkeeping (id, updated_at, server_seq, the stamp map itself) never
+ * gets a stamp: the server and sync.ts's mergeRows keep exactly one stamp per
+ * data column (deleted_at included), so an extra `updated_at` stamp written
+ * here would survive on the devices that never merged the row and vanish on
+ * the one that did — a permanent bookkeeping divergence on every new row.
  */
 function stampFields<T extends SyncFields>(
   store: StoreName,
   row: T,
   changed: Iterable<string>,
-  at: string
+  at: string,
+  previousAt?: string
 ): T {
   if (!STORES[store]?.fieldMerge) return row;
   const stamps: Record<string, string> = { ...(row.field_updated_at ?? {}) };
+  // A field with no stamp is dated by the row's updated_at (the fallback in
+  // sync.ts mergeRows and the server's mergeFields) — the state of every row
+  // written before its table became field-merged, e.g. rows the v3 upgrade
+  // gave `field_updated_at: {}`. This write bumps updated_at, which would
+  // silently re-date every such field to NOW, so a stale value in a field this
+  // write never touched would beat a genuinely newer edit to it on another
+  // device. For an edit to an existing row (`previousAt` = its updated_at
+  // before this write), pin each unstamped field to its real date first.
+  if (previousAt !== undefined) {
+    for (const field of Object.keys(row)) {
+      if (!isBookkeeping(field) && !(field in stamps)) stamps[field] = previousAt;
+    }
+  }
   for (const field of changed) {
-    if (field === 'id' || field === 'server_seq' || field === 'field_updated_at') continue;
+    if (isBookkeeping(field)) continue;
     stamps[field] = at;
   }
   return { ...row, field_updated_at: stamps };
+}
+
+/** Row bookkeeping that never carries a per-field stamp (see stampFields). */
+function isBookkeeping(field: string): boolean {
+  return field === 'id' || field === 'updated_at' || field === 'server_seq' || field === 'field_updated_at';
 }
 
 export async function all<T extends SyncFields>(store: StoreName): Promise<T[]> {
@@ -125,6 +154,7 @@ export async function put<T extends SyncFields>(store: StoreName, row: T): Promi
   enqueueIn(tx, store, stamped.id, at);
   await tx.done;
   requestSync();
+  notifyChanged([store]);
   return stamped;
 }
 
@@ -159,12 +189,13 @@ export async function patch<T extends SyncFields>(
   }
   const at = nowIso();
   const next = toPlain(
-    stampFields(store, { ...current, ...changes, updated_at: at } as T, Object.keys(changes), at)
+    stampFields(store, { ...current, ...changes, updated_at: at } as T, Object.keys(changes), at, current.updated_at)
   );
   tx.objectStore(store).put(next);
   enqueueIn(tx, store, id, at);
   await tx.done;
   requestSync();
+  notifyChanged([store]);
   return next;
 }
 
@@ -180,6 +211,7 @@ export async function bulkPut<T extends SyncFields>(store: StoreName, rows: T[])
   }
   await tx.done;
   requestSync();
+  notifyChanged([store]);
   return stamped;
 }
 
@@ -210,6 +242,7 @@ export async function putReconciled<T extends SyncFields>(
   enqueueIn(tx, store, preserved.id, contentAt);
   await tx.done;
   requestSync();
+  notifyChanged([store]);
   return preserved;
 }
 
@@ -270,14 +303,17 @@ export async function putSingleton<T extends object>(
         deleted_at: null,
         server_seq: existing?.server_seq ?? null,
       } as T & SyncFields,
-      Object.keys(fields),
-      at
+      // Reviving a tombstone is a change to deleted_at too.
+      existing?.deleted_at ? [...Object.keys(fields), 'deleted_at'] : Object.keys(fields),
+      at,
+      existing?.updated_at
     )
   );
   tx.objectStore(store).put(row);
   enqueueIn(tx, store, SINGLETON_ID, at);
   await tx.done;
   requestSync();
+  notifyChanged([store]);
   return row;
 }
 
@@ -292,11 +328,12 @@ export async function softDelete(store: StoreName, id: string): Promise<void> {
     return;
   }
   tx.objectStore(store).put(
-    stampFields(store, { ...row, deleted_at: at, updated_at: at }, ['deleted_at'], at)
+    stampFields(store, { ...row, deleted_at: at, updated_at: at }, ['deleted_at'], at, row.updated_at)
   );
   enqueueIn(tx, store, id, at);
   await tx.done;
   requestSync();
+  notifyChanged([store]);
 }
 
 export async function softDeleteMany(store: StoreName, ids: string[]): Promise<void> {
@@ -308,11 +345,12 @@ export async function softDeleteMany(store: StoreName, ids: string[]): Promise<v
     const row = (await tx.objectStore(store).get(id)) as SyncFields | undefined;
     if (row && !row.deleted_at) {
       tx.objectStore(store).put(
-        stampFields(store, { ...row, deleted_at: at, updated_at: at }, ['deleted_at'], at)
+        stampFields(store, { ...row, deleted_at: at, updated_at: at }, ['deleted_at'], at, row.updated_at)
       );
       enqueueIn(tx, store, id, at);
     }
   }
   await tx.done;
   requestSync();
+  notifyChanged([store]);
 }
