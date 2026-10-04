@@ -31,8 +31,6 @@ on:
       - 'frontend/package*.json'
       - 'backend/**'
       - '.github/workflows/sync-tests.yml'
-  schedule:
-    - cron: '0 7 * * *' # nightly full run
   workflow_dispatch:
 
 concurrency:
