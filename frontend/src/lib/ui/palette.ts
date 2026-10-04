@@ -155,11 +155,11 @@ const firstLine = (s: string | null | undefined) => (s ?? '').split('\n').find((
 /** A project's label: its name, or its description for unnamed rows (crud.ts projectLabel). */
 export function projectName(project: PaletteProject | undefined): string {
   if (!project) return '';
-  return project.name.trim() || firstLine(project.description) || '(unnamed)';
+  return (project.name ?? '').trim() || firstLine(project.description) || '(unnamed)';
 }
 
 export function taskTitle(task: PaletteTask): string {
-  return task.title.trim() || firstLine(task.description) || '(untitled)';
+  return (task.title ?? '').trim() || firstLine(task.description) || '(untitled)';
 }
 
 export function versionLabel(version: PaletteVersion, projects: ReadonlyMap<string, PaletteProject>): string {

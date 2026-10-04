@@ -7,13 +7,13 @@ import { PRIORITY_VALUES } from './db/types';
 /** A project's display label: its name, or its description for unnamed (pre-v3) projects. */
 export function projectLabel(project: Pick<Project, 'name' | 'description'> | undefined): string {
   if (!project) return '';
-  return project.name.trim() || project.description || '';
+  return (project.name ?? '').trim() || project.description || '';
 }
 
 /** A task's display label: its title, or its description for untitled (pre-v3) tasks. */
 export function taskLabel(task: Pick<Task, 'title' | 'description'> | undefined): string {
   if (!task) return '';
-  return task.title.trim() || task.description || '';
+  return (task.title ?? '').trim() || task.description || '';
 }
 
 /** "Urgent" for 1 … "Low" for 4; anything else is shown as the raw number. */
